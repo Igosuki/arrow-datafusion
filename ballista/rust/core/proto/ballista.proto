@@ -323,6 +323,7 @@ enum FileType{
   NdJson = 0;
   Parquet = 1;
   CSV = 2;
+  Avro = 3;
 }
 
 message AnalyzeNode {
