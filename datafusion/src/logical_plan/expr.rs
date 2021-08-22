@@ -25,7 +25,7 @@ use crate::physical_plan::{
     aggregates, expressions::binary_operator_data_type, functions, udf::ScalarUDF,
     window_functions,
 };
-use crate::utils::get_field;
+use crate::utils::{get_field, get_indexed_field};
 use crate::{physical_plan::udaf::AggregateUDF, scalar::ScalarValue};
 use aggregates::{AccumulatorFunctionImplementation, StateTypeFunction};
 use arrow::{compute::can_cast_types, datatypes::DataType};
@@ -245,12 +245,19 @@ pub enum Expr {
     IsNull(Box<Expr>),
     /// arithmetic negation of an expression, the operand must be of a signed numeric data type
     Negative(Box<Expr>),
-    /// Returns the field of a [`StructArray`] by name
+    /// Returns the field of a [`StructArray`] or ['UnionArray'] by name
     GetField {
         /// the expression to take the field from
         expr: Box<Expr>,
         /// The name of the field to take
         name: String,
+    },
+    /// Returns the field of a [`ListArray`] or ['DictionaryArray'] by name
+    GetIndexedField {
+        /// the expression to take the field from
+        expr: Box<Expr>,
+        /// The name of the field to take
+        key: String,
     },
     /// Whether an expression is between a given range.
     Between {
@@ -444,6 +451,10 @@ impl Expr {
                 let data_type = expr.get_type(schema)?;
                 get_field(&data_type, name).map(|x| x.data_type().clone())
             }
+            Expr::GetIndexedField { ref expr, key } => {
+                let data_type = expr.get_type(schema)?;
+                get_indexed_field(&data_type, key).map(|x| x.data_type().clone())
+            }
         }
     }
 
@@ -502,6 +513,10 @@ impl Expr {
             Expr::GetField { ref expr, name } => {
                 let data_type = expr.get_type(input_schema)?;
                 get_field(&data_type, name).map(|x| x.is_nullable())
+            }
+            Expr::GetIndexedField { ref expr, key } => {
+                let data_type = expr.get_type(input_schema)?;
+                get_indexed_field(&data_type, key).map(|x| x.is_nullable())
             }
         }
     }
@@ -787,6 +802,7 @@ impl Expr {
             }
             Expr::Wildcard => Ok(visitor),
             Expr::GetField { ref expr, .. } => expr.accept(visitor),
+            Expr::GetIndexedField { ref expr, .. } => expr.accept(visitor),
         }?;
 
         visitor.post_visit(self)
@@ -947,6 +963,10 @@ impl Expr {
             Expr::GetField { expr, name } => Expr::GetField {
                 expr: rewrite_boxed(expr, rewriter)?,
                 name,
+            },
+            Expr::GetIndexedField { expr, key } => Expr::GetIndexedField {
+                expr: rewrite_boxed(expr, rewriter)?,
+                key,
             },
         };
 
@@ -1710,6 +1730,9 @@ impl fmt::Debug for Expr {
             }
             Expr::Wildcard => write!(f, "*"),
             Expr::GetField { ref expr, name } => write!(f, "({:?}).{}", expr, name),
+            Expr::GetIndexedField { ref expr, key } => {
+                write!(f, "({:?})[{}]", expr, key)
+            }
         }
     }
 }
@@ -1734,6 +1757,7 @@ fn create_function_name(
 /// Returns a readable name of an expression based on the input schema.
 /// This function recursively transverses the expression for names such as "CAST(a > 2)".
 fn create_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
+    eprintln!("e = {:?} {}", e, std::any::type_name::<Expr>());
     match e {
         Expr::Alias(_, name) => Ok(name.clone()),
         Expr::Column(c) => Ok(c.flat_name()),
@@ -1789,6 +1813,10 @@ fn create_name(e: &Expr, input_schema: &DFSchema) -> Result<String> {
         Expr::GetField { expr, name } => {
             let expr = create_name(expr, input_schema)?;
             Ok(format!("{}.{}", expr, name))
+        }
+        Expr::GetIndexedField { expr, key } => {
+            let expr = create_name(expr, input_schema)?;
+            Ok(format!("{}[{}]", expr, key))
         }
         Expr::ScalarFunction { fun, args, .. } => {
             create_function_name(&fun.to_string(), false, args, input_schema)
