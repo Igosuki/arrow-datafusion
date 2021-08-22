@@ -19,10 +19,10 @@ use arrow::datatypes::{DataType, Field};
 
 use crate::error::{DataFusionError, Result};
 
-/// Returns the first field named `name` from the fields of a [`DataType::Struct`].
+/// Returns the first field named `name` from the fields of a [`DataType::Struct`] or [`DataType::Union`].
 /// # Error
-/// Errors iff
-/// * the `data_type` is not a Struct or,
+/// Errors if
+/// * the `data_type` is not a Struct or Union,
 /// * there is no field named `name`
 pub fn get_field<'a>(data_type: &'a DataType, name: &str) -> Result<&'a Field> {
     match data_type {
@@ -39,6 +39,30 @@ pub fn get_field<'a>(data_type: &'a DataType, name: &str) -> Result<&'a Field> {
         }
         _ => Err(DataFusionError::Plan(
             "The expression to get a field is only valid for `Struct` or 'Union'"
+                .to_string(),
+        )),
+    }
+}
+
+/// Returns the a field access indexed by `name` from a [`DataType::List`] or [`DataType::Dictionnary`].
+/// # Error
+/// Errors if
+/// * the `data_type` is not a Struct or,
+/// * there is no field key is not of the required index type
+pub fn get_indexed_field<'a>(data_type: &'a DataType, key: &str) -> Result<Field> {
+    match data_type {
+        DataType::Dictionary(ref kt, ref vt) => {
+            match kt.as_ref() {
+                DataType::Utf8 => Ok(Field::new(key, *vt.clone(), true)),
+                _ => Err(DataFusionError::Plan(format!("The key for a dictionary has to be an utf8 string, was : \"{}\"", key))),
+            }
+        },
+        DataType::List(lt) => match key.parse::<usize>() {
+            Ok(_) => Ok(Field::new(key, lt.data_type().clone(), false)),
+            Err(_) => Err(DataFusionError::Plan(format!("The key for a list has to be an integer, was : \"{}\"", key))),
+        },
+        _ => Err(DataFusionError::Plan(
+            "The expression to get an indexed field is only valid for `List` or 'Dictionary'"
                 .to_string(),
         )),
     }

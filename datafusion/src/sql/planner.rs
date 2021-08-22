@@ -1100,6 +1100,20 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
                 }
             }
 
+            SQLExpr::MapAccess { ref column, key } => {
+                if let SQLExpr::Identifier(ref id) = column.as_ref() {
+                    Ok(Expr::GetIndexedField {
+                        expr: Box::new(col(&id.value)),
+                        key: key.to_string(),
+                    })
+                } else {
+                    Err(DataFusionError::NotImplemented(format!(
+                        "map access requires an identifier, found column {} instead",
+                        column
+                    )))
+                }
+            }
+
             SQLExpr::CompoundIdentifier(ids) => {
                 let var_names = ids.iter().map(|x| x.value.clone()).collect::<Vec<_>>();
                 Ok(plan_compound(var_names))

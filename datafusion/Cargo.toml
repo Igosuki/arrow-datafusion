@@ -49,7 +49,10 @@ ahash = "0.7"
 hashbrown = "0.11"
 arrow = { version = "5.0", features = ["prettyprint"] }
 parquet = { version = "5.0", features = ["arrow", "snap", "brotli", "flate2", "lz4", "base64"], default-features = false }
-sqlparser = "0.9.0"
+#sqlparser = { path = "../../sqlparser-rs" }
+#sqlparser = "0.9.0"
+sqlparser = { git = "https://github.com/Igosuki/sqlparser-rs", branch = "enable_map_access_for_numbers"}
+
 paste = "^1.0"
 num_cpus = "1.13.0"
 chrono = "0.4"

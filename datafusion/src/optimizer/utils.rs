@@ -80,6 +80,7 @@ impl ExpressionVisitor for ColumnNameVisitor<'_> {
             Expr::InList { .. } => {}
             Expr::Wildcard => {}
             Expr::GetField { .. } => {}
+            Expr::GetIndexedField { .. } => {}
         }
         Ok(Recursion::Continue(self))
     }
@@ -278,6 +279,7 @@ pub fn expr_sub_expressions(expr: &Expr) -> Result<Vec<Expr>> {
             "Wildcard expressions are not valid in a logical query plan".to_owned(),
         )),
         Expr::GetField { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
+        Expr::GetIndexedField { expr, .. } => Ok(vec![expr.as_ref().to_owned()]),
     }
 }
 
@@ -441,6 +443,10 @@ pub fn rewrite_expression(expr: &Expr, expressions: &[Expr]) -> Result<Expr> {
         Expr::Wildcard { .. } => Err(DataFusionError::Internal(
             "Wildcard expressions are not valid in a logical query plan".to_owned(),
         )),
+        Expr::GetIndexedField { expr: _, key } => Ok(Expr::GetIndexedField {
+            expr: Box::new(expressions[0].clone()),
+            key: key.clone(),
+        }),
     }
 }
 
