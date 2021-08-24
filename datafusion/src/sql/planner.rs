@@ -1128,7 +1128,6 @@ impl<'a, S: ContextProvider> SqlToRel<'a, S> {
 
             SQLExpr::MapAccess { ref column, keys } => {
                 if let SQLExpr::Identifier(ref id) = column.as_ref() {
-                    eprintln!("MapAccess : id = {:?} keys = {:?}", id, keys);
                     Ok(plan_indexed(col(&id.value), keys.clone()))
                 } else {
                     Err(DataFusionError::NotImplemented(format!(
