@@ -163,6 +163,32 @@ impl TryInto<LogicalPlan> for &protobuf::LogicalPlanNode {
                 .build()
                 .map_err(|e| e.into())
             }
+            LogicalPlanType::AvroScan(scan) => {
+                let schema: Schema = convert_required!(scan.schema)?;
+                let options = AvroReadOptions {
+                    schema: Some(Arc::new(schema.clone())),
+                    file_extension: &scan.file_extension,
+                };
+
+                let mut projection = None;
+                if let Some(columns) = &scan.projection {
+                    let column_indices = columns
+                        .columns
+                        .iter()
+                        .map(|name| schema.index_of(name))
+                        .collect::<Result<Vec<usize>, _>>()?;
+                    projection = Some(column_indices);
+                }
+
+                LogicalPlanBuilder::scan_avro_with_name(
+                    &scan.path,
+                    options,
+                    projection,
+                    &scan.table_name,
+                )?
+                .build()
+                .map_err(|e| e.into())
+            }
             LogicalPlanType::Sort(sort) => {
                 let input: LogicalPlan = convert_box_required!(sort.input)?;
                 let sort_expr: Vec<Expr> = sort
@@ -1114,6 +1140,7 @@ impl TryInto<Field> for &protobuf::Field {
     }
 }
 
+use datafusion::physical_plan::avro::AvroReadOptions;
 use datafusion::physical_plan::{aggregates, windows};
 use datafusion::prelude::{
     array, date_part, date_trunc, length, lower, ltrim, md5, rtrim, sha224, sha256,
