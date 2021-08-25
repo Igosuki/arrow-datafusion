@@ -46,12 +46,13 @@ unicode_expressions = ["unicode-segmentation"]
 force_hash_collisions = []
 
 zstd = ["parquet/zstd"]
+brotli = ["parquet/brotli"]
 
 [dependencies]
 ahash = "0.7"
 hashbrown = { version = "0.11", features = ["raw"] }
 arrow = { version = "^5.2", features = ["prettyprint"] }
-parquet = { version = "^5.2", features = ["arrow", "snap", "brotli", "flate2", "lz4", "base64"], default-features = false }
+parquet = { version = "^5.2", features = ["arrow", "snap", "flate2", "lz4", "base64"], default-features = false }
 #sqlparser = { path = "../../sqlparser-rs" }
 #sqlparser = "0.9.0"
 sqlparser = { git = "https://github.com/Igosuki/sqlparser-rs", branch = "enable_map_access_for_numbers"}
