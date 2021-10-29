@@ -835,13 +835,14 @@ fn flatten_values(values: &[Value]) -> Vec<Value> {
     values
         .iter()
         .flat_map(|row| {
-            if let Value::Array(values) = row {
+            let v = maybe_resolve_union(row);
+            if let Value::Array(values) = v {
                 values.clone()
-            } else if let Value::Null = row {
+            } else if let Value::Null = v {
                 vec![Value::Null]
             } else {
                 // we interpret a scalar as a single-value list to minimise data loss
-                vec![row.clone()]
+                vec![v.clone()]
             }
         })
         .collect()
@@ -965,7 +966,10 @@ where
             Value::Double(f) => NumCast::from(*f),
             Value::Duration(_d) => unimplemented!(), // shenanigans type
             Value::Null => None,
-            _ => unreachable!(),
+            v => {
+                eprintln!("value = {:?}, v = {:?}", value, v);
+                unreachable!()
+            }
         }
     }
 }
