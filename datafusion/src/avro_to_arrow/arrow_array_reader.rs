@@ -91,28 +91,31 @@ impl<'a, R: Read> AvroArrowArrayReader<'a, R> {
     /// Read the next batch of records
     #[allow(clippy::should_implement_trait)]
     pub fn next_batch(&mut self, batch_size: usize) -> ArrowResult<Option<RecordBatch>> {
-        let mut rows = Vec::with_capacity(batch_size);
-        for value in self.reader.by_ref().take(batch_size) {
-            let v = value.map_err(|e| {
-                ArrowError::ParseError(format!("Failed to parse avro value: {:?}", e))
-            })?;
-            match v {
-                Value::Record(v) => {
-                    rows.push(v);
-                }
+        //let mut rows = Vec::with_capacity(batch_size);
+        let rows: ArrowResult<Vec<Vec<(String, Value)>>> = self
+            .reader
+            .by_ref()
+            .take(batch_size)
+            .map(|value| match value {
+                Ok(Value::Record(v)) => Ok(v),
+                Err(e) => Err(ArrowError::ParseError(format!(
+                    "Failed to parse avro value: {:?}",
+                    e
+                ))),
                 other => {
                     return Err(ArrowError::ParseError(format!(
                         "Row needs to be of type object, got: {:?}",
                         other
                     )))
                 }
-            }
-        }
+            })
+            .collect();
+        let vec = rows?;
+        let rows: Vec<&Vec<(String, Value)>> = vec.iter().collect();
         if rows.is_empty() {
             // reached end of file
             return Ok(None);
         }
-        let rows = rows.iter().collect::<Vec<&Vec<(String, Value)>>>();
         let rows = &rows[..];
         let projection = self.projection.clone().unwrap_or_else(Vec::new);
         let arrays = self.build_struct_array(rows, self.schema.fields(), &projection);
