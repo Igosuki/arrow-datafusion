@@ -16,7 +16,7 @@
 // under the License.
 
 //! Execution plan for reading CSV files
-
+// TODO: table providers have moved
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::ExecutionPlan;
 use crate::physical_plan::{common, source::Source, Partitioning};

@@ -19,7 +19,7 @@
 //!
 //! This data source allows Line-delimited JSON string or files to be used as input for queries.
 //!
-
+// TODO: table providers have moved
 use std::{
     any::Any,
     io::{BufReader, Read, Seek},

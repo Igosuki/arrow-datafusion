@@ -33,6 +33,7 @@
 //! let schema = csvdata.schema();
 //! ```
 
+// TODO: table providers have moved
 use arrow::datatypes::SchemaRef;
 use arrow::io::csv;
 use std::any::Any;

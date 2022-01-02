@@ -16,6 +16,8 @@
 // under the License.
 
 //! Execution plan for reading line-delimited JSON files
+
+// TODO: table providers have moved
 use async_trait::async_trait;
 use futures::Stream;
 

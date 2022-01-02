@@ -28,6 +28,7 @@ use crate::error::{DataFusionError, Result};
 use arrow::array::*;
 use arrow::error::ArrowError;
 use hashbrown::HashMap;
+use lazy_static::lazy_static;
 use regex::Regex;
 
 macro_rules! downcast_string_arg {
@@ -250,66 +251,54 @@ pub fn regexp_matches<O: Offset>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::*;
 
     #[test]
-    fn match_single_group() -> Result<()> {
-        let array = Utf8Array::<i32>::from(&[
-            Some("abc-005-def"),
-            Some("X-7-5"),
-            Some("X545"),
-            None,
-            Some("foobarbequebaz"),
-            Some("foobarbequebaz"),
-        ]);
+    fn test_case_sensitive_regexp_match() {
+        let values = StringArray::from(vec!["abc"; 5]);
+        let patterns =
+            StringArray::from(vec!["^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)"]);
 
-        let patterns = Utf8Array::<i32>::from_slice(&[
-            r".*-(\d*)-.*",
-            r".*-(\d*)-.*",
-            r".*-(\d*)-.*",
-            r".*-(\d*)-.*",
-            r"(bar)(bequ1e)",
-            "",
-        ]);
+        let elem_builder: GenericStringBuilder<i32> = GenericStringBuilder::new(0);
+        let mut expected_builder = ListBuilder::new(elem_builder);
+        expected_builder.values().append_value("a").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.append(false).unwrap();
+        expected_builder.values().append_value("b").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.append(false).unwrap();
+        expected_builder.append(false).unwrap();
+        let expected = expected_builder.finish();
 
-        let result = regexp_matches(&array, &patterns, None)?;
+        let re = regexp_match::<i32>(&[Arc::new(values), Arc::new(patterns)]).unwrap();
 
-        let expected = vec![
-            Some(vec![Some("005")]),
-            Some(vec![Some("7")]),
-            None,
-            None,
-            None,
-            Some(vec![Some("")]),
-        ];
-
-        let mut array = MutableListArray::<i32, MutableUtf8Array<i32>>::new();
-        array.try_extend(expected)?;
-        let expected: ListArray<i32> = array.into();
-
-        assert_eq!(expected, result);
-        Ok(())
+        assert_eq!(re.as_ref(), &expected);
     }
 
     #[test]
-    fn match_single_group_with_flags() -> Result<()> {
-        let array = Utf8Array::<i32>::from(&[
-            Some("abc-005-def"),
-            Some("X-7-5"),
-            Some("X545"),
-            None,
-        ]);
+    fn test_case_insensitive_regexp_match() {
+        let values = StringArray::from(vec!["abc"; 5]);
+        let patterns =
+            StringArray::from(vec!["^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)"]);
+        let flags = StringArray::from(vec!["i"; 5]);
 
-        let patterns = Utf8Array::<i32>::from_slice(&vec![r"x.*-(\d*)-.*"; 4]);
-        let flags = Utf8Array::<i32>::from_slice(vec!["i"; 4]);
+        let elem_builder: GenericStringBuilder<i32> = GenericStringBuilder::new(0);
+        let mut expected_builder = ListBuilder::new(elem_builder);
+        expected_builder.values().append_value("a").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.values().append_value("a").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.values().append_value("b").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.values().append_value("b").unwrap();
+        expected_builder.append(true).unwrap();
+        expected_builder.append(false).unwrap();
+        let expected = expected_builder.finish();
 
-        let result = regexp_matches(&array, &patterns, Some(&flags))?;
+        let re =
+            regexp_match::<i32>(&[Arc::new(values), Arc::new(patterns), Arc::new(flags)])
+                .unwrap();
 
-        let expected = vec![None, Some(vec![Some("7")]), None, None];
-        let mut array = MutableListArray::<i32, MutableUtf8Array<i32>>::new();
-        array.try_extend(expected)?;
-        let expected: ListArray<i32> = array.into();
-
-        assert_eq!(expected, result);
-        Ok(())
+        assert_eq!(re.as_ref(), &expected);
     }
 }

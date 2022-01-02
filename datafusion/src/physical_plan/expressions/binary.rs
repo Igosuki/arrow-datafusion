@@ -33,6 +33,32 @@ use super::coercion::{
 };
 use arrow::scalar::Scalar;
 
+// Simple (low performance) kernels until optimized kernels are added to arrow
+// See https://github.com/apache/arrow-rs/issues/960
+
+fn is_distinct_from_bool(
+    left: &BooleanArray,
+    right: &BooleanArray,
+) -> Result<BooleanArray> {
+    // Different from `neq_bool` because `null is distinct from null` is false and not null
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(left, right)| Some(left != right))
+        .collect())
+}
+
+fn is_not_distinct_from_bool(
+    left: &BooleanArray,
+    right: &BooleanArray,
+) -> Result<BooleanArray> {
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(left, right)| Some(left == right))
+        .collect())
+}
+
 /// Binary expression
 #[derive(Debug)]
 pub struct BinaryExpr {
@@ -422,16 +448,21 @@ fn common_binary_type(
         | Operator::RegexIMatch
         | Operator::RegexNotMatch
         | Operator::RegexNotIMatch => string_coercion(lhs_type, rhs_type),
+        Operator::IsDistinctFrom | Operator::IsNotDistinctFrom => {
+            eq_coercion(lhs_type, rhs_type)
+        }
     };
 
     // re-write the error message of failed coercions to include the operator's information
     match result {
-        None => Err(DataFusionError::Plan(
+        None => {
+            Err(DataFusionError::Plan(
             format!(
                 "'{:?} {} {:?}' can't be evaluated because there isn't a common type to coerce the types to",
                 lhs_type, op, rhs_type
             ),
-        )),
+        ))
+        },
         Some(t) => Ok(t)
     }
 }
@@ -446,7 +477,7 @@ pub fn binary_operator_data_type(
     rhs_type: &DataType,
 ) -> Result<DataType> {
     // validate that it is possible to perform the operation on incoming types.
-    // (or the return datatype cannot be infered)
+    // (or the return datatype cannot be inferred)
     let common_type = common_binary_type(lhs_type, op, rhs_type)?;
 
     match op {
@@ -464,7 +495,9 @@ pub fn binary_operator_data_type(
         | Operator::RegexMatch
         | Operator::RegexIMatch
         | Operator::RegexNotMatch
-        | Operator::RegexNotIMatch => Ok(DataType::Boolean),
+        | Operator::RegexNotIMatch
+        | Operator::IsDistinctFrom
+        | Operator::IsNotDistinctFrom => Ok(DataType::Boolean),
         // math operations return the same value as the common coerced type
         Operator::Plus
         | Operator::Minus
@@ -505,6 +538,7 @@ impl PhysicalExpr for BinaryExpr {
             )));
         }
 
+        // Attempt to use special kernels if one input is scalar and the other is an array
         let scalar_result = match (&left_value, &right_value) {
             (ColumnarValue::Array(array), ColumnarValue::Scalar(scalar)) => {
                 evaluate_scalar(array.as_ref(), &self.op, scalar)
@@ -528,6 +562,56 @@ impl PhysicalExpr for BinaryExpr {
         let result = evaluate(left.as_ref(), &self.op, right.as_ref());
         result.map(|a| ColumnarValue::Array(a))
     }
+}
+
+fn is_distinct_from<T>(
+    left: &PrimitiveArray<T>,
+    right: &PrimitiveArray<T>,
+) -> Result<BooleanArray>
+where
+    T: ArrowNumericType,
+{
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(x, y)| Some(x != y))
+        .collect())
+}
+
+fn is_distinct_from_utf8<OffsetSize: StringOffsetSizeTrait>(
+    left: &GenericStringArray<OffsetSize>,
+    right: &GenericStringArray<OffsetSize>,
+) -> Result<BooleanArray> {
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(x, y)| Some(x != y))
+        .collect())
+}
+
+fn is_not_distinct_from<T>(
+    left: &PrimitiveArray<T>,
+    right: &PrimitiveArray<T>,
+) -> Result<BooleanArray>
+where
+    T: ArrowNumericType,
+{
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(x, y)| Some(x == y))
+        .collect())
+}
+
+fn is_not_distinct_from_utf8<OffsetSize: StringOffsetSizeTrait>(
+    left: &GenericStringArray<OffsetSize>,
+    right: &GenericStringArray<OffsetSize>,
+) -> Result<BooleanArray> {
+    Ok(left
+        .iter()
+        .zip(right.iter())
+        .map(|(x, y)| Some(x == y))
+        .collect())
 }
 
 /// return two physical expressions that are optionally coerced to a
@@ -569,7 +653,7 @@ mod tests {
 
     use super::*;
     use crate::error::Result;
-    use crate::physical_plan::expressions::col;
+    use crate::physical_plan::expressions::{col, lit};
 
     // Create a binary expression without coercion. Used here when we do not want to coerce the expressions
     // to valid types. Usage can result in an execution (after plan) error.
@@ -976,6 +1060,42 @@ mod tests {
         Ok(())
     }
 
+    // Test `scalar <op> arr` produces expected
+    fn apply_logic_op_scalar_arr(
+        schema: &SchemaRef,
+        scalar: bool,
+        arr: &ArrayRef,
+        op: Operator,
+        expected: &BooleanArray,
+    ) -> Result<()> {
+        let scalar = lit(scalar.into());
+
+        let arithmetic_op = binary_simple(scalar, op, col("a", schema)?);
+        let batch = RecordBatch::try_new(Arc::clone(schema), vec![Arc::clone(arr)])?;
+        let result = arithmetic_op.evaluate(&batch)?.into_array(batch.num_rows());
+        assert_eq!(result.as_ref(), expected);
+
+        Ok(())
+    }
+
+    // Test `arr <op> scalar` produces expected
+    fn apply_logic_op_arr_scalar(
+        schema: &SchemaRef,
+        arr: &ArrayRef,
+        scalar: bool,
+        op: Operator,
+        expected: &BooleanArray,
+    ) -> Result<()> {
+        let scalar = lit(scalar.into());
+
+        let arithmetic_op = binary_simple(col("a", schema)?, op, scalar);
+        let batch = RecordBatch::try_new(Arc::clone(schema), vec![Arc::clone(arr)])?;
+        let result = arithmetic_op.evaluate(&batch)?.into_array(batch.num_rows());
+        assert_eq!(result.as_ref(), expected);
+
+        Ok(())
+    }
+
     #[test]
     fn and_with_nulls_op() -> Result<()> {
         let schema = Schema::new(vec![
@@ -1066,6 +1186,293 @@ mod tests {
         Ok(())
     }
 
+    /// Returns (schema, a: BooleanArray, b: BooleanArray) with all possible inputs
+    ///
+    /// a: [true, true, true,  NULL, NULL, NULL,  false, false, false]
+    /// b: [true, NULL, false, true, NULL, false, true,  NULL,  false]
+    fn bool_test_arrays() -> (SchemaRef, BooleanArray, BooleanArray) {
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Boolean, false),
+            Field::new("b", DataType::Boolean, false),
+        ]);
+        let a = [
+            Some(true),
+            Some(true),
+            Some(true),
+            None,
+            None,
+            None,
+            Some(false),
+            Some(false),
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        let b = [
+            Some(true),
+            None,
+            Some(false),
+            Some(true),
+            None,
+            Some(false),
+            Some(true),
+            None,
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        (Arc::new(schema), a, b)
+    }
+
+    /// Returns (schema, BooleanArray) with [true, NULL, false]
+    fn scalar_bool_test_array() -> (SchemaRef, ArrayRef) {
+        let schema = Schema::new(vec![Field::new("a", DataType::Boolean, false)]);
+        let a: BooleanArray = vec![Some(true), None, Some(false)].iter().collect();
+        (Arc::new(schema), Arc::new(a))
+    }
+
+    #[test]
+    fn eq_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = vec![
+            Some(true),
+            None,
+            Some(false),
+            None,
+            None,
+            None,
+            Some(false),
+            None,
+            Some(true),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::Eq, expected).unwrap();
+    }
+
+    #[test]
+    fn eq_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::Eq, &expected).unwrap();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::Eq, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::Eq, &expected).unwrap();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::Eq, &expected).unwrap();
+    }
+
+    #[test]
+    fn neq_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(false),
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::NotEq, expected).unwrap();
+    }
+
+    #[test]
+    fn neq_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::NotEq, &expected).unwrap();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::NotEq, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::NotEq, &expected)
+            .unwrap();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::NotEq, &expected)
+            .unwrap();
+    }
+
+    #[test]
+    fn lt_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(false),
+            None,
+            Some(false),
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::Lt, expected).unwrap();
+    }
+
+    #[test]
+    fn lt_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(false), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::Lt, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::Lt, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::Lt, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(false)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::Lt, &expected).unwrap();
+    }
+
+    #[test]
+    fn lt_eq_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(true),
+            None,
+            Some(false),
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            Some(true),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::LtEq, expected).unwrap();
+    }
+
+    #[test]
+    fn lt_eq_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::LtEq, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(true)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::LtEq, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::LtEq, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::LtEq, &expected).unwrap();
+    }
+
+    #[test]
+    fn gt_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(false),
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            Some(false),
+            None,
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::Gt, expected).unwrap();
+    }
+
+    #[test]
+    fn gt_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::Gt, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(false)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::Gt, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(false)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::Gt, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::Gt, &expected).unwrap();
+    }
+
+    #[test]
+    fn gt_eq_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(true),
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            Some(false),
+            None,
+            Some(true),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::GtEq, expected).unwrap();
+    }
+
+    #[test]
+    fn gt_eq_op_bool_scalar() {
+        let (schema, a) = scalar_bool_test_array();
+        let expected = [Some(true), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, true, &a, Operator::GtEq, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(false)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, true, Operator::GtEq, &expected).unwrap();
+
+        let expected = [Some(false), None, Some(true)].iter().collect();
+        apply_logic_op_scalar_arr(&schema, false, &a, Operator::GtEq, &expected).unwrap();
+
+        let expected = [Some(true), None, Some(true)].iter().collect();
+        apply_logic_op_arr_scalar(&schema, &a, false, Operator::GtEq, &expected).unwrap();
+    }
+
+    #[test]
+    fn is_distinct_from_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(true),
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(true),
+            Some(false),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::IsDistinctFrom, expected).unwrap();
+    }
+
+    #[test]
+    fn is_not_distinct_from_op_bool() {
+        let (schema, a, b) = bool_test_arrays();
+        let expected = [
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(true),
+        ]
+        .iter()
+        .collect();
+        apply_logic_op(schema, a, b, Operator::IsNotDistinctFrom, expected).unwrap();
+    }
+
     #[test]
     fn test_coersion_error() -> Result<()> {
         let expr =
@@ -1079,5 +1486,38 @@ mod tests {
                 "Coercion should have returned an DataFusionError::Internal".to_string(),
             ))
         }
+    }
+
+    #[test]
+    fn relatively_deeply_nested() {
+        // Reproducer for https://github.com/apache/arrow-datafusion/issues/419
+
+        // where even relatively shallow binary expressions overflowed
+        // the stack in debug builds
+
+        let input: Vec<_> = vec![1, 2, 3, 4, 5].into_iter().map(Some).collect();
+        let a: Int32Array = input.iter().collect();
+
+        let batch = RecordBatch::try_from_iter(vec![("a", Arc::new(a) as _)]).unwrap();
+        let schema = batch.schema();
+
+        // build a left deep tree ((((a + a) + a) + a ....
+        let tree_depth: i32 = 100;
+        let expr = (0..tree_depth)
+            .into_iter()
+            .map(|_| col("a", schema.as_ref()).unwrap())
+            .reduce(|l, r| binary_simple(l, Operator::Plus, r))
+            .unwrap();
+
+        let result = expr
+            .evaluate(&batch)
+            .expect("evaluation")
+            .into_array(batch.num_rows());
+
+        let expected: Int32Array = input
+            .into_iter()
+            .map(|i| i.map(|i| i * tree_depth))
+            .collect();
+        assert_eq!(result.as_ref(), &expected);
     }
 }

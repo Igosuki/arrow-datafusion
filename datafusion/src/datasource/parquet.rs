@@ -17,6 +17,8 @@
 
 //! Parquet data source
 
+// TODO: this code has been previously moved to another table provider impl
+
 use std::any::{type_name, Any};
 use std::fs::File;
 use std::sync::Arc;

@@ -17,6 +17,7 @@
 
 //! Defines the SORT plan
 
+use super::common::AbortOnDropSingle;
 use super::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, RecordOutput,
 };
@@ -219,6 +220,7 @@ pin_project! {
         output: futures::channel::oneshot::Receiver<ArrowResult<Option<RecordBatch>>>,
         finished: bool,
         schema: SchemaRef,
+        drop_helper: AbortOnDropSingle<()>,
     }
 }
 
@@ -230,7 +232,7 @@ impl SortStream {
     ) -> Self {
         let (tx, rx) = futures::channel::oneshot::channel();
         let schema = input.schema();
-        tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             let schema = input.schema();
             let sorted_batch = common::collect(input)
                 .await
@@ -248,13 +250,15 @@ impl SortStream {
                     Ok(result)
                 });
 
-            tx.send(sorted_batch)
+            // failing here is OK, the receiver is gone and does not care about the result
+            tx.send(sorted_batch).ok();
         });
 
         Self {
             output: rx,
             finished: false,
             schema,
+            drop_helper: AbortOnDropSingle::new(join_handle),
         }
     }
 }
@@ -298,30 +302,46 @@ impl RecordBatchStream for SortStream {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
+
     use super::*;
+    use crate::datasource::object_store::local::LocalFileSystem;
     use crate::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use crate::physical_plan::expressions::col;
     use crate::physical_plan::memory::MemoryExec;
     use crate::physical_plan::{
         collect,
-        csv::{CsvExec, CsvReadOptions},
+        file_format::{CsvExec, PhysicalPlanConfig},
     };
-    use crate::test;
+    use crate::test::assert_is_pending;
+    use crate::test::exec::assert_strong_count_converges_to_zero;
+    use crate::test::{self, exec::BlockingExec};
+    use crate::test_util;
     use arrow::array::*;
     use arrow::datatypes::*;
+    use futures::FutureExt;
 
     #[tokio::test]
     async fn test_sort() -> Result<()> {
-        let schema = test::aggr_test_schema();
+        let schema = test_util::aggr_test_schema();
         let partitions = 4;
-        let path = test::create_partitioned_csv("aggregate_test_100.csv", partitions)?;
-        let csv = CsvExec::try_new(
-            &path,
-            CsvReadOptions::new().schema(&schema),
-            None,
-            1024,
-            None,
-        )?;
+        let (_, files) =
+            test::create_partitioned_csv("aggregate_test_100.csv", partitions)?;
+
+        let csv = CsvExec::new(
+            PhysicalPlanConfig {
+                object_store: Arc::new(LocalFileSystem {}),
+                file_schema: Arc::clone(&schema),
+                file_groups: files,
+                statistics: Statistics::default(),
+                projection: None,
+                batch_size: 1024,
+                limit: None,
+                table_partition_cols: vec![],
+            },
+            true,
+            b',',
+        );
 
         let sort_exec = Arc::new(SortExec::try_new(
             vec![
@@ -363,6 +383,57 @@ mod tests {
         let c7 = columns[6].as_any().downcast_ref::<UInt8Array>().unwrap();
         assert_eq!(c7.value(0), 15);
         assert_eq!(c7.value(c7.len() - 1), 254,);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sort_metadata() -> Result<()> {
+        let field_metadata: BTreeMap<String, String> =
+            vec![("foo".to_string(), "bar".to_string())]
+                .into_iter()
+                .collect();
+        let schema_metadata: HashMap<String, String> =
+            vec![("baz".to_string(), "barf".to_string())]
+                .into_iter()
+                .collect();
+
+        let mut field = Field::new("field_name", DataType::UInt64, true);
+        field.set_metadata(Some(field_metadata.clone()));
+        let schema = Schema::new_with_metadata(vec![field], schema_metadata.clone());
+        let schema = Arc::new(schema);
+
+        let data: ArrayRef =
+            Arc::new(vec![3, 2, 1].into_iter().map(Some).collect::<UInt64Array>());
+
+        let batch = RecordBatch::try_new(schema.clone(), vec![data]).unwrap();
+        let input =
+            Arc::new(MemoryExec::try_new(&[vec![batch]], schema.clone(), None).unwrap());
+
+        let sort_exec = Arc::new(SortExec::try_new(
+            vec![PhysicalSortExpr {
+                expr: col("field_name", &schema)?,
+                options: SortOptions::default(),
+            }],
+            input,
+        )?);
+
+        let result: Vec<RecordBatch> = collect(sort_exec).await?;
+
+        let expected_data: ArrayRef =
+            Arc::new(vec![1, 2, 3].into_iter().map(Some).collect::<UInt64Array>());
+        let expected_batch =
+            RecordBatch::try_new(schema.clone(), vec![expected_data]).unwrap();
+
+        // Data is correct
+        assert_eq!(&vec![expected_batch], &result);
+
+        // explicitlty ensure the metadata is present
+        assert_eq!(
+            result[0].schema().fields()[0].metadata(),
+            &Some(field_metadata)
+        );
+        assert_eq!(result[0].schema().metadata(), &schema_metadata);
 
         Ok(())
     }
@@ -467,6 +538,31 @@ mod tests {
         ];
 
         assert_eq!(expected, result);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_drop_cancel() -> Result<()> {
+        let schema =
+            Arc::new(Schema::new(vec![Field::new("a", DataType::Float32, true)]));
+
+        let blocking_exec = Arc::new(BlockingExec::new(Arc::clone(&schema), 1));
+        let refs = blocking_exec.refs();
+        let sort_exec = Arc::new(SortExec::try_new(
+            vec![PhysicalSortExpr {
+                expr: col("a", &schema)?,
+                options: SortOptions::default(),
+            }],
+            blocking_exec,
+        )?);
+
+        let fut = collect(sort_exec);
+        let mut fut = fut.boxed();
+
+        assert_is_pending(&mut fut);
+        drop(fut);
+        assert_strong_count_converges_to_zero(refs).await;
 
         Ok(())
     }
