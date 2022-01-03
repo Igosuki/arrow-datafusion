@@ -110,13 +110,13 @@ mod test {
 
         let timestamp_col = schema.column_with_name("timestamp_col").unwrap();
         assert_eq!(
-            &DataType::Timestamp(TimeUnit::Microsecond, None),
+            &DataType::Timestamp(TimeUnit::Microsecond, Some("00:00".to_string())),
             timestamp_col.1.data_type()
         );
         let timestamp_array = batch
             .column(timestamp_col.0)
             .as_any()
-            .downcast_ref::<UInt64Array>()
+            .downcast_ref::<Int64Array>()
             .unwrap();
         for i in 0..timestamp_array.len() {
             assert!(timestamp_array.is_valid(i));
@@ -146,7 +146,7 @@ mod test {
             .unwrap();
         assert_eq!(
             *a_array.data_type(),
-            DataType::List(Box::new(Field::new("bigint", DataType::Int64, true)))
+            DataType::List(Box::new(Field::new("item", DataType::Int64, true)))
         );
         let array = a_array.value(0);
         assert_eq!(*array.data_type(), DataType::Int64);
@@ -194,7 +194,7 @@ mod test {
             sum_id += (0..a_array.len()).map(|i| a_array.value(i)).sum::<i32>();
         }
         assert_eq!(8, sum_num_rows);
-        assert_eq!(2, num_batches);
+        assert_eq!(1, num_batches);
         assert_eq!(28, sum_id);
     }
 }

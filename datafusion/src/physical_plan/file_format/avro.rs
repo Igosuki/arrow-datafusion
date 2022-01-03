@@ -18,14 +18,13 @@
 //! Execution plan for reading line-delimited Avro files
 #[cfg(feature = "avro")]
 use crate::avro_to_arrow;
+#[cfg(feature = "avro")]
+use crate::datasource::object_store::SeekRead;
 use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
 use arrow::datatypes::SchemaRef;
-
-use crate::avro_to_arrow::ReaderBuilder;
-use crate::datasource::object_store::SeekRead;
 use async_trait::async_trait;
 use std::any::Any;
 use std::sync::Arc;
@@ -107,7 +106,7 @@ impl ExecutionPlan for AvroExec {
 
         // The avro reader cannot limit the number of records, so `remaining` is ignored.
         let fun = move |file: Box<dyn SeekRead>, _remaining: &Option<usize>| {
-            let builder = ReaderBuilder::new()
+            let builder = avro_to_arrow::ReaderBuilder::new()
                 .read_schema()
                 .with_batch_size(batch_size);
             let reader = builder.build(file).unwrap();

@@ -284,10 +284,10 @@ mod tests {
         let timestamp_col = schema.column_with_name("timestamp_col").unwrap();
         assert_eq!(10, timestamp_col.0);
         assert_eq!(
-            &DataType::Timestamp(TimeUnit::Microsecond, None),
+            &DataType::Timestamp(TimeUnit::Microsecond, Some("00:00".to_string())),
             timestamp_col.1.data_type()
         );
-        let col = get_col::<UInt64Array>(&batch, timestamp_col).unwrap();
+        let col = get_col::<Int64Array>(&batch, timestamp_col).unwrap();
         assert_eq!(1230768000000000, col.value(0));
         assert_eq!(1230768060000000, col.value(1));
     }

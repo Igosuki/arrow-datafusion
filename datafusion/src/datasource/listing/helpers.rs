@@ -304,7 +304,7 @@ fn paths_to_batch(
     let mut fields = vec![
         Field::new(FILE_PATH_COLUMN_NAME, DataType::Utf8, false),
         Field::new(FILE_SIZE_COLUMN_NAME, DataType::UInt64, false),
-        Field::new(FILE_MODIFIED_COLUMN_NAME, DataType::Date64, false),
+        Field::new(FILE_MODIFIED_COLUMN_NAME, DataType::Int64, false),
     ];
     for pn in table_partition_cols {
         fields.push(Field::new(pn, DataType::Utf8, false));
