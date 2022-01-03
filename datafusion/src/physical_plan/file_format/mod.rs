@@ -255,7 +255,7 @@ fn create_dict_array(
 
     // build keys array
     let sliced_key_buffer = match key_buffer_cache {
-        Some(buf) if buf.len() >= len => buf.clone().slice(buf.len(), len),
+        Some(buf) if buf.len() >= len => buf.clone().slice(buf.len() - len, len),
         _ => {
             let key_buffer_builder = Buffer::<u8>::new_zeroed(len);
             key_buffer_cache.insert(key_buffer_builder).clone()
