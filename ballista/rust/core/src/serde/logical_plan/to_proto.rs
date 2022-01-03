@@ -20,7 +20,6 @@
 //! processes.
 
 use super::super::proto_error;
-use crate::datasource::DfTableAdapter;
 use crate::serde::protobuf::integer_type::IntegerTypeEnum;
 use crate::serde::{byte_to_string, protobuf, BallistaError};
 use arrow::datatypes::{IntegerType, UnionMode};
@@ -293,6 +292,7 @@ impl TryInto<DataType> for &protobuf::ArrowType {
                 DataType::Dictionary(
                     pb_key.try_into()?,
                     Box::new(pb_value.as_ref().try_into()?),
+                    false,
                 )
             }
         })
@@ -405,7 +405,7 @@ impl From<&DataType> for protobuf::arrow_type::ArrowTypeEnum {
                     .map(|field| field.into())
                     .collect::<Vec<_>>(),
             }),
-            DataType::Dictionary(key_type, value_type) => {
+            DataType::Dictionary(key_type, value_type, _) => {
                 ArrowTypeEnum::Dictionary(Box::new(protobuf::Dictionary {
                     key: Some(key_type.into()),
                     value: Some(Box::new(value_type.as_ref().into())),
@@ -552,7 +552,7 @@ impl TryFrom<&DataType> for protobuf::scalar_type::Datatype {
             | DataType::LargeList(_)
             | DataType::Struct(_)
             | DataType::Union(_, _, _)
-            | DataType::Dictionary(_, _)
+            | DataType::Dictionary(_, _, _)
             | DataType::Map(_, _)
             | DataType::Decimal(_, _) => {
                 return Err(proto_error(format!(

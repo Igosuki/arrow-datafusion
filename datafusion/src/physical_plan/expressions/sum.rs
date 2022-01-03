@@ -31,8 +31,6 @@ use arrow::{
 };
 
 use super::format_state_name;
-use crate::arrow::array::Array;
-use arrow::array::DecimalArray;
 
 /// SUM aggregate expression
 #[derive(Debug)]
@@ -159,34 +157,34 @@ macro_rules! typed_sum_delta_batch {
     }};
 }
 
-// TODO implement this in arrow-rs with simd
-// https://github.com/apache/arrow-rs/issues/1010
-fn sum_decimal_batch(
-    values: &ArrayRef,
-    precision: &usize,
-    scale: &usize,
-) -> Result<ScalarValue> {
-    let array = values.as_any().downcast_ref::<DecimalArray>().unwrap();
-
-    if array.null_count() == array.len() {
-        return Ok(ScalarValue::Decimal128(None, *precision, *scale));
-    }
-
-    let mut result = 0_i128;
-    for i in 0..array.len() {
-        if array.is_valid(i) {
-            result += array.value(i);
-        }
-    }
-    Ok(ScalarValue::Decimal128(Some(result), *precision, *scale))
-}
+// // TODO implement this in arrow-rs with simd
+// // https://github.com/apache/arrow-rs/issues/1010
+// fn sum_decimal_batch(
+//     values: &ArrayRef,
+//     precision: &usize,
+//     scale: &usize,
+// ) -> Result<ScalarValue> {
+//     let array = values.as_any().downcast_ref::<DecimalArray>().unwrap();
+//
+//     if array.null_count() == array.len() {
+//         return Ok(ScalarValue::Decimal128(None, *precision, *scale));
+//     }
+//
+//     let mut result = 0_i128;
+//     for i in 0..array.len() {
+//         if array.is_valid(i) {
+//             result += array.value(i);
+//         }
+//     }
+//     Ok(ScalarValue::Decimal128(Some(result), *precision, *scale))
+// }
 
 // sums the array and returns a ScalarValue of its corresponding type.
 pub(super) fn sum_batch(values: &ArrayRef) -> Result<ScalarValue> {
     Ok(match values.data_type() {
-        DataType::Decimal(precision, scale) => {
-            sum_decimal_batch(values, precision, scale)?
-        }
+        // DataType::Decimal(precision, scale) => {
+        //     sum_decimal_batch(values, precision, scale)?
+        // }
         DataType::Float64 => typed_sum_delta_batch!(values, Float64Array, Float64),
         DataType::Float32 => typed_sum_delta_batch!(values, Float32Array, Float32),
         DataType::Int64 => typed_sum_delta_batch!(values, Int64Array, Int64),
@@ -381,7 +379,7 @@ impl Accumulator for SumAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arrow::array::DecimalBuilder;
+    //use crate::arrow::array::DecimalBuilder;
     use crate::physical_plan::expressions::col;
     use crate::{error::Result, generic_test_op};
     use arrow::datatypes::*;
@@ -399,126 +397,126 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn sum_decimal() -> Result<()> {
-        // test sum
-        let left = ScalarValue::Decimal128(Some(123), 10, 2);
-        let right = ScalarValue::Decimal128(Some(124), 10, 2);
-        let result = sum(&left, &right)?;
-        assert_eq!(ScalarValue::Decimal128(Some(123 + 124), 10, 2), result);
-        // test sum decimal with diff scale
-        let left = ScalarValue::Decimal128(Some(123), 10, 3);
-        let right = ScalarValue::Decimal128(Some(124), 10, 2);
-        let result = sum(&left, &right)?;
-        assert_eq!(
-            ScalarValue::Decimal128(Some(123 + 124 * 10_i128.pow(1)), 10, 3),
-            result
-        );
-        // diff precision and scale for decimal data type
-        let left = ScalarValue::Decimal128(Some(123), 10, 2);
-        let right = ScalarValue::Decimal128(Some(124), 11, 3);
-        let result = sum(&left, &right);
-        assert_eq!(
-            ScalarValue::Decimal128(Some(123 * 10_i128.pow(3 - 2) + 124), 11, 3),
-            result.unwrap()
-        );
+    // #[test]
+    // fn sum_decimal() -> Result<()> {
+    //     // test sum
+    //     let left = ScalarValue::Decimal128(Some(123), 10, 2);
+    //     let right = ScalarValue::Decimal128(Some(124), 10, 2);
+    //     let result = sum(&left, &right)?;
+    //     assert_eq!(ScalarValue::Decimal128(Some(123 + 124), 10, 2), result);
+    //     // test sum decimal with diff scale
+    //     let left = ScalarValue::Decimal128(Some(123), 10, 3);
+    //     let right = ScalarValue::Decimal128(Some(124), 10, 2);
+    //     let result = sum(&left, &right)?;
+    //     assert_eq!(
+    //         ScalarValue::Decimal128(Some(123 + 124 * 10_i128.pow(1)), 10, 3),
+    //         result
+    //     );
+    //     // diff precision and scale for decimal data type
+    //     let left = ScalarValue::Decimal128(Some(123), 10, 2);
+    //     let right = ScalarValue::Decimal128(Some(124), 11, 3);
+    //     let result = sum(&left, &right);
+    //     assert_eq!(
+    //         ScalarValue::Decimal128(Some(123 * 10_i128.pow(3 - 2) + 124), 11, 3),
+    //         result.unwrap()
+    //     );
+    //
+    //     // test sum batch
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = sum_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(Some(15), 10, 0), result);
+    //
+    //     // test agg
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Sum,
+    //         ScalarValue::Decimal128(Some(15), 20, 0),
+    //         DataType::Decimal(20, 0)
+    //     )
+    // }
 
-        // test sum batch
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = sum_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(Some(15), 10, 0), result);
-
-        // test agg
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Sum,
-            ScalarValue::Decimal128(Some(15), 20, 0),
-            DataType::Decimal(20, 0)
-        )
-    }
-
-    #[test]
-    fn sum_decimal_with_nulls() -> Result<()> {
-        // test sum
-        let left = ScalarValue::Decimal128(None, 10, 2);
-        let right = ScalarValue::Decimal128(Some(123), 10, 2);
-        let result = sum(&left, &right)?;
-        assert_eq!(ScalarValue::Decimal128(Some(123), 10, 2), result);
-
-        // test with batch
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            if i == 2 {
-                decimal_builder.append_null()?;
-            } else {
-                decimal_builder.append_value(i)?;
-            }
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = sum_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(Some(13), 10, 0), result);
-
-        // test agg
-        let mut decimal_builder = DecimalBuilder::new(5, 35, 0);
-        for i in 1..6 {
-            if i == 2 {
-                decimal_builder.append_null()?;
-            } else {
-                decimal_builder.append_value(i)?;
-            }
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(35, 0),
-            Sum,
-            ScalarValue::Decimal128(Some(13), 38, 0),
-            DataType::Decimal(38, 0)
-        )
-    }
-
-    #[test]
-    fn sum_decimal_all_nulls() -> Result<()> {
-        // test sum
-        let left = ScalarValue::Decimal128(None, 10, 2);
-        let right = ScalarValue::Decimal128(None, 10, 2);
-        let result = sum(&left, &right)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 2), result);
-
-        // test with batch
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for _i in 1..6 {
-            decimal_builder.append_null()?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = sum_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
-
-        // test agg
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for _i in 1..6 {
-            decimal_builder.append_null()?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Sum,
-            ScalarValue::Decimal128(None, 20, 0),
-            DataType::Decimal(20, 0)
-        )
-    }
+    // #[test]
+    // fn sum_decimal_with_nulls() -> Result<()> {
+    //     // test sum
+    //     let left = ScalarValue::Decimal128(None, 10, 2);
+    //     let right = ScalarValue::Decimal128(Some(123), 10, 2);
+    //     let result = sum(&left, &right)?;
+    //     assert_eq!(ScalarValue::Decimal128(Some(123), 10, 2), result);
+    //
+    //     // test with batch
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         if i == 2 {
+    //             decimal_builder.append_null()?;
+    //         } else {
+    //             decimal_builder.append_value(i)?;
+    //         }
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = sum_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(Some(13), 10, 0), result);
+    //
+    //     // test agg
+    //     let mut decimal_builder = DecimalBuilder::new(5, 35, 0);
+    //     for i in 1..6 {
+    //         if i == 2 {
+    //             decimal_builder.append_null()?;
+    //         } else {
+    //             decimal_builder.append_value(i)?;
+    //         }
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(35, 0),
+    //         Sum,
+    //         ScalarValue::Decimal128(Some(13), 38, 0),
+    //         DataType::Decimal(38, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn sum_decimal_all_nulls() -> Result<()> {
+    //     // test sum
+    //     let left = ScalarValue::Decimal128(None, 10, 2);
+    //     let right = ScalarValue::Decimal128(None, 10, 2);
+    //     let result = sum(&left, &right)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 2), result);
+    //
+    //     // test with batch
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for _i in 1..6 {
+    //         decimal_builder.append_null()?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = sum_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
+    //
+    //     // test agg
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for _i in 1..6 {
+    //         decimal_builder.append_null()?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Sum,
+    //         ScalarValue::Decimal128(None, 20, 0),
+    //         DataType::Decimal(20, 0)
+    //     )
+    // }
 
     #[test]
     fn sum_i32() -> Result<()> {

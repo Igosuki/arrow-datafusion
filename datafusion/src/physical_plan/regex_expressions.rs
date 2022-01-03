@@ -251,54 +251,57 @@ pub fn regexp_matches<O: Offset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::*;
 
     #[test]
     fn test_case_sensitive_regexp_match() {
-        let values = StringArray::from(vec!["abc"; 5]);
-        let patterns =
-            StringArray::from(vec!["^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)"]);
+        let values = Utf8Array::<i32>::from(vec![Some("abc"); 5]);
+        let patterns = Utf8Array::<i32>::from_slice(&vec![
+            "^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)",
+        ]);
 
-        let elem_builder: GenericStringBuilder<i32> = GenericStringBuilder::new(0);
-        let mut expected_builder = ListBuilder::new(elem_builder);
-        expected_builder.values().append_value("a").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.append(false).unwrap();
-        expected_builder.values().append_value("b").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.append(false).unwrap();
-        expected_builder.append(false).unwrap();
-        let expected = expected_builder.finish();
+        let elem_builder = MutableUtf8Array::<i32>::with_capacity(0);
+        let mut expected_builder =
+            MutableListArray::<i32, MutableUtf8Array<i32>>::new_with_capacity(
+                elem_builder,
+                6,
+            );
+        expected_builder.try_push(Some(vec![Some("a")])).unwrap();
+        expected_builder.push_null();
+        expected_builder.try_push(Some(vec![Some("b")])).unwrap();
+        expected_builder.push_null();
+        expected_builder.push_null();
+        let expected = expected_builder.as_arc();
 
         let re = regexp_match::<i32>(&[Arc::new(values), Arc::new(patterns)]).unwrap();
 
-        assert_eq!(re.as_ref(), &expected);
+        assert_eq!(re, expected);
     }
 
     #[test]
     fn test_case_insensitive_regexp_match() {
-        let values = StringArray::from(vec!["abc"; 5]);
-        let patterns =
-            StringArray::from(vec!["^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)"]);
-        let flags = StringArray::from(vec!["i"; 5]);
+        let values = Utf8Array::<i32>::from(vec![Some("abc"); 5]);
+        let patterns = Utf8Array::<i32>::from_slice(&vec![
+            "^(a)", "^(A)", "(b|d)", "(B|D)", "^(b|c)",
+        ]);
+        let flags = Utf8Array::<i32>::from(vec![Some("i"); 5]);
 
-        let elem_builder: GenericStringBuilder<i32> = GenericStringBuilder::new(0);
-        let mut expected_builder = ListBuilder::new(elem_builder);
-        expected_builder.values().append_value("a").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.values().append_value("a").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.values().append_value("b").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.values().append_value("b").unwrap();
-        expected_builder.append(true).unwrap();
-        expected_builder.append(false).unwrap();
-        let expected = expected_builder.finish();
+        let elem_builder = MutableUtf8Array::<i32>::with_capacity(0);
+        let mut expected_builder =
+            MutableListArray::<i32, MutableUtf8Array<i32>>::new_with_capacity(
+                elem_builder,
+                0,
+            );
+        expected_builder.try_push(Some(vec![Some("a")])).unwrap();
+        expected_builder.try_push(Some(vec![Some("a")])).unwrap();
+        expected_builder.try_push(Some(vec![Some("b")])).unwrap();
+        expected_builder.try_push(Some(vec![Some("b")])).unwrap();
+        expected_builder.push_null();
+        let expected = expected_builder.as_arc();
 
         let re =
             regexp_match::<i32>(&[Arc::new(values), Arc::new(patterns), Arc::new(flags)])
                 .unwrap();
 
-        assert_eq!(re.as_ref(), &expected);
+        assert_eq!(re, expected);
     }
 }

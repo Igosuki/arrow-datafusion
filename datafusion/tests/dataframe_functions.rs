@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::{
-    array::{Int32Array, StringArray},
+    array::{Int32Array, Utf8Array},
     record_batch::RecordBatch,
 };
 
@@ -45,13 +45,13 @@ fn create_test_table() -> Result<Arc<dyn DataFrame>> {
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
-            Arc::new(StringArray::from(vec![
+            Arc::new(Utf8Array::<i32>::from_slice(vec![
                 "abcDEF",
                 "abc123",
                 "CBAdef",
                 "123AbcDef",
             ])),
-            Arc::new(Int32Array::from(vec![1, 10, 10, 100])),
+            Arc::new(Int32Array::from_vec(vec![1, 10, 10, 100])),
         ],
     )?;
 

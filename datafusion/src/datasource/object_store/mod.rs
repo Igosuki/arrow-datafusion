@@ -21,7 +21,7 @@ pub mod local;
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
@@ -32,6 +32,14 @@ use futures::{AsyncRead, Stream, StreamExt};
 use local::LocalFileSystem;
 
 use crate::error::{DataFusionError, Result};
+
+/// Read files without Seek
+pub trait SyncRead: Read + Send + Sync {}
+impl<T: Read + Send + Sync> SyncRead for T {}
+
+/// Read files with Seek
+pub trait SeekRead: Read + Seek + Send + Sync {}
+impl<T: Seek + Read + Send + Sync> SeekRead for T {}
 
 /// Object Reader for one file in an object store.
 ///
@@ -54,6 +62,18 @@ pub trait ObjectReader: Send + Sync {
     fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
         self.sync_chunk_reader(0, self.length() as usize)
     }
+
+    /// Get reader for the entire file
+    fn sync_seek_reader(&self) -> Result<Box<dyn SeekRead>> {
+        self.sync_seek_chunk_reader(0, self.length() as usize)
+    }
+
+    /// Get reader for a part [start, start + length] in the file
+    fn sync_seek_chunk_reader(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<Box<dyn SeekRead>>;
 
     /// Get the size of the file
     fn length(&self) -> u64;

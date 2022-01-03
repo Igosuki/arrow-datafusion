@@ -16,10 +16,10 @@
 // under the License.
 
 //! Functions that are query-able and searchable via the `\h` command
-use arrow::array::StringArray;
+use arrow::array::Utf8Array;
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::io::print::print;
 use arrow::record_batch::RecordBatch;
-use arrow::util::pretty::pretty_format_batches;
 use datafusion::error::{DataFusionError, Result};
 use std::fmt;
 use std::str::FromStr;
@@ -185,7 +185,7 @@ impl fmt::Display for Function {
 
 pub fn display_all_functions() -> Result<()> {
     println!("Available help:");
-    let array = StringArray::from(
+    let array = Utf8Array::<i32>::from_slice(
         ALL_FUNCTIONS
             .iter()
             .map(|f| format!("{}", f))
@@ -193,6 +193,6 @@ pub fn display_all_functions() -> Result<()> {
     );
     let schema = Schema::new(vec![Field::new("Function", DataType::Utf8, false)]);
     let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)])?;
-    println!("{}", pretty_format_batches(&[batch]).unwrap());
+    print(&[batch]);
     Ok(())
 }

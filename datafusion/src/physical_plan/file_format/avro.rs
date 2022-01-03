@@ -23,9 +23,9 @@ use crate::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
 use arrow::datatypes::SchemaRef;
-#[cfg(feature = "avro")]
-use arrow::error::ArrowError;
 
+use crate::avro_to_arrow::ReaderBuilder;
+use crate::datasource::object_store::SeekRead;
 use async_trait::async_trait;
 use std::any::Any;
 use std::sync::Arc;
@@ -100,25 +100,18 @@ impl ExecutionPlan for AvroExec {
 
     #[cfg(feature = "avro")]
     async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
-        let proj = self.base_config.projected_file_column_names();
+        let _proj = self.base_config.projected_file_column_names();
 
         let batch_size = self.base_config.batch_size;
-        let file_schema = Arc::clone(&self.base_config.file_schema);
+        let _file_schema = Arc::clone(&self.base_config.file_schema);
 
         // The avro reader cannot limit the number of records, so `remaining` is ignored.
-        let fun = move |file, _remaining: &Option<usize>| {
-            let reader_res = avro_to_arrow::Reader::try_new(
-                file,
-                Arc::clone(&file_schema),
-                batch_size,
-                proj.clone(),
-            );
-            match reader_res {
-                Ok(r) => Box::new(r) as BatchIter,
-                Err(e) => Box::new(
-                    vec![Err(ArrowError::ExternalError(Box::new(e)))].into_iter(),
-                ),
-            }
+        let fun = move |file: Box<dyn SeekRead>, _remaining: &Option<usize>| {
+            let builder = ReaderBuilder::new()
+                .read_schema()
+                .with_batch_size(batch_size);
+            let reader = builder.build(file).unwrap();
+            Box::new(reader.into_iter()) as BatchIter
         };
 
         Ok(Box::pin(FileStream::new(

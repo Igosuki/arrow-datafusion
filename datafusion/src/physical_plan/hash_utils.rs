@@ -24,8 +24,7 @@ use arrow::array::{
     Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, UInt16Array,
     UInt32Array, UInt64Array, UInt8Array, Utf8Array,
 };
-use arrow::datatypes::{DataType, Field, IntegerType, Schema, TimeUnit};
-use std::collections::HashSet;
+use arrow::datatypes::{DataType, IntegerType, TimeUnit};
 use std::sync::Arc;
 
 // Combines two hashes into one hash
@@ -426,7 +425,7 @@ pub fn create_hashes<'a>(
                     multi_col
                 );
             }
-            DataType::Dictionary(index_type, _) => match index_type {
+            DataType::Dictionary(index_type, _, _) => match index_type {
                 IntegerType::Int8 => {
                     create_hashes_dictionary::<i8>(
                         col,
@@ -495,7 +494,7 @@ pub fn create_hashes<'a>(
             _ => {
                 // This is internal because we should have caught this before.
                 return Err(DataFusionError::Internal(format!(
-                    "Unsupported data type in hasher: {}",
+                    "Unsupported data type in hasher: {:?}",
                     col.data_type()
                 )));
             }

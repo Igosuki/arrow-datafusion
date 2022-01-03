@@ -252,60 +252,60 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn avg_decimal() -> Result<()> {
-        // test agg
-        let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
-        for i in 1..7 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Avg,
-            ScalarValue::Decimal128(Some(35000), 14, 4),
-            DataType::Decimal(14, 4)
-        )
-    }
-
-    #[test]
-    fn avg_decimal_with_nulls() -> Result<()> {
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            if i == 2 {
-                decimal_builder.append_null()?;
-            } else {
-                decimal_builder.append_value(i)?;
-            }
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Avg,
-            ScalarValue::Decimal128(Some(32500), 14, 4),
-            DataType::Decimal(14, 4)
-        )
-    }
-
-    #[test]
-    fn avg_decimal_all_nulls() -> Result<()> {
-        // test agg
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for _i in 1..6 {
-            decimal_builder.append_null()?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Avg,
-            ScalarValue::Decimal128(None, 14, 4),
-            DataType::Decimal(14, 4)
-        )
-    }
+    // #[test]
+    // fn avg_decimal() -> Result<()> {
+    //     // test agg
+    //     let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
+    //     for i in 1..7 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Avg,
+    //         ScalarValue::Decimal128(Some(35000), 14, 4),
+    //         DataType::Decimal(14, 4)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn avg_decimal_with_nulls() -> Result<()> {
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         if i == 2 {
+    //             decimal_builder.append_null()?;
+    //         } else {
+    //             decimal_builder.append_value(i)?;
+    //         }
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Avg,
+    //         ScalarValue::Decimal128(Some(32500), 14, 4),
+    //         DataType::Decimal(14, 4)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn avg_decimal_all_nulls() -> Result<()> {
+    //     // test agg
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for _i in 1..6 {
+    //         decimal_builder.append_null()?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Avg,
+    //         ScalarValue::Decimal128(None, 14, 4),
+    //         DataType::Decimal(14, 4)
+    //     )
+    // }
 
     #[test]
     fn avg_i32() -> Result<()> {

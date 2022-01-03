@@ -296,7 +296,7 @@ mod tests {
         let conf = ExecutionConfig::new();
         let optimized = AggregateStatistics::new().optimize(Arc::new(plan), &conf)?;
 
-        let (col, count) = match nulls {
+        let (_col, _count) = match nulls {
             false => (Field::new("COUNT(UInt8(1))", DataType::UInt64, false), 3),
             true => (Field::new("COUNT(a)", DataType::UInt64, false), 2),
         };

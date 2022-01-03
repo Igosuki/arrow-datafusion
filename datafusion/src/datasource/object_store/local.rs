@@ -25,7 +25,7 @@ use async_trait::async_trait;
 use futures::{stream, AsyncRead, StreamExt};
 
 use crate::datasource::object_store::{
-    FileMeta, FileMetaStream, ListEntryStream, ObjectReader, ObjectStore,
+    FileMeta, FileMetaStream, ListEntryStream, ObjectReader, ObjectStore, SeekRead,
 };
 use crate::datasource::PartitionedFile;
 use crate::error::DataFusionError;
@@ -87,9 +87,20 @@ impl ObjectReader for LocalFileReader {
         // This okay because chunks are usually fairly large.
         let mut file = File::open(&self.file.path)?;
         file.seek(SeekFrom::Start(start))?;
-
         let file = BufReader::new(file.take(length as u64));
+        Ok(Box::new(file))
+    }
 
+    fn sync_seek_chunk_reader(
+        &self,
+        start: u64,
+        _length: usize,
+    ) -> Result<Box<dyn SeekRead>> {
+        // A new file descriptor is opened for each chunk reader.
+        // This okay because chunks are usually fairly large.
+        let mut file = File::open(&self.file.path)?;
+        file.seek(SeekFrom::Start(start))?;
+        let file = BufReader::new(file);
         Ok(Box::new(file))
     }
 

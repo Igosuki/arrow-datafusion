@@ -20,10 +20,10 @@
 /// FIXME: https://github.com/apache/arrow-datafusion/issues/1058
 use fmt::Debug;
 use std::fmt;
+use std::fs::File;
 use std::sync::Arc;
 use std::{any::Any, convert::TryInto};
 
-use crate::datasource::file_format::parquet::ChunkObjectReader;
 use crate::datasource::object_store::ObjectStore;
 use crate::datasource::PartitionedFile;
 use crate::{
@@ -413,7 +413,7 @@ fn build_row_group_predicate(
     pruning_predicate: &PruningPredicate,
     metrics: ParquetFileMetrics,
     row_group_metadata: &[RowGroupMetaData],
-) -> Box<dyn Fn(&RowGroupMetaData, usize) -> bool> {
+) -> Box<dyn Fn(usize, &RowGroupMetaData) -> bool> {
     let parquet_schema = pruning_predicate.schema().as_ref();
 
     let pruning_stats = RowGroupPruningStatistics {
@@ -447,13 +447,12 @@ fn read_partition(
     metrics: ExecutionPlanMetricsSet,
     projection: &[usize],
     pruning_predicate: &Option<PruningPredicate>,
-    batch_size: usize,
+    _batch_size: usize,
     response_tx: Sender<ArrowResult<RecordBatch>>,
     limit: Option<usize>,
-    mut partition_column_projector: PartitionColumnProjector,
+    mut _partition_column_projector: PartitionColumnProjector,
 ) -> Result<()> {
-    let all_files = partition.file_partition.files;
-    for partitioned_file in all_files {
+    for partitioned_file in partition {
         let file_metrics = ParquetFileMetrics::new(
             partition_index,
             &*partitioned_file.file_meta.path(),
@@ -461,8 +460,10 @@ fn read_partition(
         );
         let object_reader =
             object_store.file_reader(partitioned_file.file_meta.sized_file.clone())?;
+        let len = object_reader.length() as usize;
+        let result = object_reader.sync_seek_chunk_reader(0, len)?;
         let mut reader = read::RecordReader::try_new(
-            ChunkObjectReader(object_reader),
+            result,
             Some(projection.to_vec()),
             limit,
             None,
@@ -470,11 +471,14 @@ fn read_partition(
         )?;
         if let Some(pruning_predicate) = pruning_predicate {
             let _file_metadata = reader.metadata();
-            reader.set_groups_filter(Arc::new(build_row_group_predicate(
-                pruning_predicate,
-                file_metrics,
-                &reader.metadata().row_groups,
-            )));
+            reader.set_groups_filter(
+                build_row_group_predicate(
+                    pruning_predicate,
+                    file_metrics,
+                    &reader.metadata().row_groups,
+                )
+                .into(),
+            );
         }
 
         for batch in reader {

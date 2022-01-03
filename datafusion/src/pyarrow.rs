@@ -15,6 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! This library demonstrates a minimal usage of Rust's C data interface to pass
+//! arrays from and to Python.
+
+use std::convert::{From, TryFrom};
+use std::sync::Arc;
+
+use pyo3::ffi::Py_uintptr_t;
+use pyo3::import_exception;
+use pyo3::prelude::*;
+
+use crate::array::{make_array, Array, ArrayData, ArrayRef};
+use crate::datatypes::{DataType, Field, Schema};
+use crate::error::ArrowError;
+use crate::ffi;
+use crate::ffi::FFI_ArrowSchema;
+use crate::record_batch::RecordBatch;
 use pyo3::exceptions::{PyException, PyNotImplementedError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;

@@ -20,15 +20,7 @@
 
 use ahash::RandomState;
 
-use arrow::{
-    array::{
-        ArrayData, ArrayRef, BooleanArray, LargeStringArray, PrimitiveArray,
-        TimestampMicrosecondArray, TimestampMillisecondArray, TimestampSecondArray,
-        UInt32BufferBuilder, UInt32Builder, UInt64BufferBuilder, UInt64Builder,
-    },
-    compute,
-    datatypes::{UInt32Type, UInt64Type},
-};
+use arrow::array::{ArrayRef, BooleanArray, PrimitiveArray};
 use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::{any::Any, usize};
@@ -38,15 +30,14 @@ use async_trait::async_trait;
 use futures::{Stream, StreamExt, TryStreamExt};
 use tokio::sync::Mutex;
 
+use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
-use arrow::{array::*, buffer::MutableBuffer};
 
 use arrow::array::{
     Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
-    StringArray, TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array,
-    UInt8Array,
+    UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow::compute::take;
 
@@ -68,10 +59,10 @@ use super::{
     DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream,
 };
-use crate::arrow::array::BooleanBufferBuilder;
 use crate::arrow::datatypes::TimeUnit;
 use crate::physical_plan::coalesce_batches::concat_batches;
 use crate::physical_plan::PhysicalExpr;
+use arrow::bitmap::MutableBitmap;
 use log::debug;
 use std::fmt;
 
@@ -405,13 +396,9 @@ impl ExecutionPlan for HashJoinExec {
         let num_rows = left_data.1.num_rows();
         let visited_left_side = match self.join_type {
             JoinType::Left | JoinType::Full | JoinType::Semi | JoinType::Anti => {
-                let mut buffer = BooleanBufferBuilder::new(num_rows);
-
-                buffer.append_n(num_rows, false);
-
-                buffer
+                MutableBitmap::from_len_zeroed(num_rows)
             }
-            JoinType::Inner | JoinType::Right => BooleanBufferBuilder::new(0),
+            JoinType::Inner | JoinType::Right => MutableBitmap::with_capacity(0),
         };
         Ok(Box::pin(HashJoinStream::new(
             self.schema.clone(),
@@ -510,7 +497,7 @@ struct HashJoinStream {
     /// Random state used for hashing initialization
     random_state: RandomState,
     /// Keeps track of the left side rows whether they are visited
-    visited_left_side: BooleanBufferBuilder,
+    visited_left_side: MutableBitmap,
     /// There is nothing to process anymore and left side is processed in case of left join
     is_exhausted: bool,
     /// Metrics
@@ -532,7 +519,7 @@ impl HashJoinStream {
         right: SendableRecordBatchStream,
         column_indices: Vec<ColumnIndex>,
         random_state: RandomState,
-        visited_left_side: BooleanBufferBuilder,
+        visited_left_side: MutableBitmap,
         join_metrics: HashJoinMetrics,
         null_equals_null: bool,
     ) -> Self {
@@ -684,8 +671,8 @@ fn build_join_indexes(
     match join_type {
         JoinType::Inner | JoinType::Semi | JoinType::Anti => {
             // Using a buffer builder to avoid slower normal builder
-            let mut left_indices = MutableBuffer::<u64>::new();
-            let mut right_indices = MutableBuffer::<u32>::new();
+            let mut left_indices = Vec::<u64>::new();
+            let mut right_indices = Vec::<u32>::new();
 
             // Visit all of the right rows
             for (row, hash_value) in hash_values.iter().enumerate() {
@@ -727,8 +714,8 @@ fn build_join_indexes(
             ))
         }
         JoinType::Left => {
-            let mut left_indices = MutableBuffer::<u64>::new();
-            let mut right_indices = MutableBuffer::<u32>::new();
+            let mut left_indices = Vec::<u64>::new();
+            let mut right_indices = Vec::<u32>::new();
 
             // First visit all of the rows
             for (row, hash_value) in hash_values.iter().enumerate() {
@@ -865,44 +852,16 @@ fn equal_rows(
             }
             DataType::Timestamp(time_unit, None) => match time_unit {
                 TimeUnit::Second => {
-                    equal_rows_elem!(
-                        TimestampSecondArray,
-                        l,
-                        r,
-                        left,
-                        right,
-                        null_equals_null
-                    )
+                    equal_rows_elem!(UInt64Array, l, r, left, right, null_equals_null)
                 }
                 TimeUnit::Millisecond => {
-                    equal_rows_elem!(
-                        TimestampMillisecondArray,
-                        l,
-                        r,
-                        left,
-                        right,
-                        null_equals_null
-                    )
+                    equal_rows_elem!(UInt64Array, l, r, left, right, null_equals_null)
                 }
                 TimeUnit::Microsecond => {
-                    equal_rows_elem!(
-                        TimestampMicrosecondArray,
-                        l,
-                        r,
-                        left,
-                        right,
-                        null_equals_null
-                    )
+                    equal_rows_elem!(UInt64Array, l, r, left, right, null_equals_null)
                 }
                 TimeUnit::Nanosecond => {
-                    equal_rows_elem!(
-                        TimestampNanosecondArray,
-                        l,
-                        r,
-                        left,
-                        right,
-                        null_equals_null
-                    )
+                    equal_rows_elem!(UInt64Array, l, r, left, right, null_equals_null)
                 }
             },
             DataType::Utf8 => {
@@ -925,21 +884,21 @@ fn equal_rows(
 
 // Produces a batch for left-side rows that have/have not been matched during the whole join
 fn produce_from_matched(
-    visited_left_side: &BooleanBufferBuilder,
+    visited_left_side: &MutableBitmap,
     schema: &SchemaRef,
     column_indices: &[ColumnIndex],
     left_data: &JoinLeftData,
     unmatched: bool,
 ) -> ArrowResult<RecordBatch> {
     let indices = if unmatched {
-        UInt64Array::from_iter_values(
+        UInt64Array::from_iter(
             (0..visited_left_side.len())
-                .filter_map(|v| (!visited_left_side.get_bit(v)).then(|| v as u64)),
+                .filter_map(|v| (!visited_left_side.get(v)).then(|| Some(v as u64))),
         )
     } else {
-        UInt64Array::from_iter_values(
+        UInt64Array::from_iter(
             (0..visited_left_side.len())
-                .filter_map(|v| (visited_left_side.get_bit(v)).then(|| v as u64)),
+                .filter_map(|v| (visited_left_side.get(v)).then(|| Some(v as u64))),
         )
     };
 
@@ -953,7 +912,7 @@ fn produce_from_matched(
             }
             JoinSide::Right => {
                 let datatype = schema.field(idx).data_type();
-                new_null_array(datatype, num_rows).into()
+                new_null_array(datatype.clone(), num_rows).into()
             }
         };
 
@@ -998,7 +957,7 @@ impl Stream for HashJoinStream {
                             | JoinType::Semi
                             | JoinType::Anti => {
                                 left_side.iter().flatten().for_each(|x| {
-                                    self.visited_left_side.set_bit(x as usize, true);
+                                    self.visited_left_side.set(*x as usize, true);
                                 });
                             }
                             JoinType::Inner | JoinType::Right => {}

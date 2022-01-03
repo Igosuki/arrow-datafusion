@@ -16,12 +16,10 @@
 // under the License.
 //! Object store implem used for testing
 
-use std::{
-    io,
-    io::{Cursor, Read},
-    sync::Arc,
-};
+use std::io::Read;
+use std::{io, io::Cursor, sync::Arc};
 
+use crate::datasource::object_store::SeekRead;
 use crate::{
     datasource::object_store::{
         FileMeta, FileMetaStream, ListEntryStream, ObjectReader, ObjectStore, SizedFile,
@@ -112,7 +110,17 @@ impl ObjectReader for EmptyObjectReader {
         _start: u64,
         _length: usize,
     ) -> Result<Box<dyn Read + Send + Sync>> {
-        Ok(Box::new(Cursor::new(vec![0; self.0 as usize])))
+        let backend: Vec<u8> = vec![0u8; self.0 as usize];
+        let cursor: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(backend));
+        Ok(cursor)
+    }
+
+    fn sync_seek_chunk_reader(
+        &self,
+        _start: u64,
+        _length: usize,
+    ) -> Result<Box<dyn SeekRead>> {
+        todo!()
     }
 
     fn length(&self) -> u64 {

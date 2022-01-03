@@ -21,6 +21,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
+use arrow::io::csv::read;
 use arrow::{self, datatypes::SchemaRef};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -93,24 +94,18 @@ impl FileFormat for CsvFormat {
     async fn infer_schema(&self, mut readers: ObjectReaderStream) -> Result<SchemaRef> {
         let mut schemas = vec![];
 
-        let mut records_to_read = self.schema_infer_max_rec.unwrap_or(std::usize::MAX);
+        let records_to_read = self.schema_infer_max_rec.unwrap_or(std::usize::MAX);
 
         while let Some(obj_reader) = readers.next().await {
-            let mut reader = obj_reader?.sync_reader()?;
-            let (schema, records_read) = arrow::csv::reader::infer_reader_schema(
+            let reader = obj_reader?.sync_seek_reader()?;
+            let mut reader = read::ReaderBuilder::new().from_reader(reader);
+            let schema = read::infer_schema(
                 &mut reader,
-                self.delimiter,
                 Some(records_to_read),
                 self.has_header,
+                &read::infer,
             )?;
-            if records_read == 0 {
-                continue;
-            }
             schemas.push(schema.clone());
-            records_to_read -= records_read;
-            if records_to_read == 0 {
-                break;
-            }
         }
 
         let merged_schema = Schema::try_merge(schemas)?;
@@ -133,8 +128,6 @@ impl FileFormat for CsvFormat {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::StringArray;
-
     use super::*;
     use crate::{
         datasource::{
@@ -146,6 +139,7 @@ mod tests {
         },
         physical_plan::collect,
     };
+    use arrow::array::Utf8Array;
 
     #[tokio::test]
     async fn read_small_batches() -> Result<()> {
@@ -231,7 +225,7 @@ mod tests {
         let array = batches[0]
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<Utf8Array<i32>>()
             .unwrap();
         let mut values: Vec<&str> = vec![];
         for i in 0..5 {

@@ -22,12 +22,11 @@ use crate::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
 
-use arrow::csv;
 use arrow::datatypes::SchemaRef;
+use arrow::io::csv::read;
+use async_trait::async_trait;
 use std::any::Any;
 use std::sync::Arc;
-
-use async_trait::async_trait;
 
 use super::file_stream::{BatchIter, FileStream};
 use super::PhysicalPlanConfig;
@@ -113,18 +112,28 @@ impl ExecutionPlan for CsvExec {
         let has_header = self.has_header;
         let delimiter = self.delimiter;
         let start_line = if has_header { 1 } else { 0 };
+        let mut rows = vec![read::ByteRecord::default(); batch_size];
 
         let fun = move |file, remaining: &Option<usize>| {
-            let bounds = remaining.map(|x| (0, x + start_line));
-            Box::new(csv::Reader::new(
-                file,
-                Arc::clone(&file_schema),
-                has_header,
-                Some(delimiter),
-                batch_size,
-                bounds,
-                file_projection.clone(),
-            )) as BatchIter
+            let file_projection = file_projection.clone();
+            let _bounds = remaining.map(|x| (0, x + start_line));
+            let mut reader = read::ReaderBuilder::new()
+                .delimiter(delimiter)
+                .from_reader(file);
+            // let schema =
+            //     read::infer_schema(&mut reader, None, true, &read::infer).unwrap();
+            let rows_read = read::read_rows(&mut reader, 0, &mut rows).unwrap();
+            let rows = &rows[..rows_read];
+            Box::new(
+                vec![read::deserialize_batch(
+                    rows,
+                    file_schema.fields(),
+                    file_projection.as_ref().map(|v| v.as_slice()),
+                    0,
+                    read::deserialize_column,
+                )]
+                .into_iter(),
+            ) as BatchIter
         };
 
         Ok(Box::pin(FileStream::new(

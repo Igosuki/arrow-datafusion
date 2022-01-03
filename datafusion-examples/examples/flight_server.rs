@@ -76,9 +76,8 @@ impl FlightService for FlightServiceImpl {
             .await
             .unwrap();
 
-        let options = datafusion::arrow::ipc::writer::IpcWriteOptions::default();
         let schema_result =
-            arrow::io::flight::serialize_schema_to_result(&schema, &options).into();
+            arrow::io::flight::serialize_schema_to_result(&schema, &[]).into();
 
         Ok(Response::new(schema_result))
     }
@@ -117,7 +116,7 @@ impl FlightService for FlightServiceImpl {
                 // add an initial FlightData message that sends schema
                 let options = WriteOptions::default();
                 let schema_flight_data =
-                    arrow::io::flight::serialize_schema(&df.schema().clone().into());
+                    arrow::io::flight::serialize_schema(&df.schema().clone().into(), &[]);
 
                 let mut flights: Vec<Result<FlightData, Status>> =
                     vec![Ok(schema_flight_data)];
@@ -126,7 +125,7 @@ impl FlightService for FlightServiceImpl {
                     .iter()
                     .flat_map(|batch| {
                         let (flight_dictionaries, flight_batch) =
-                            arrow::io::flight::serialize_batch(batch, &options);
+                            arrow::io::flight::serialize_batch(batch, &[], &options);
                         flight_dictionaries
                             .into_iter()
                             .chain(std::iter::once(flight_batch))

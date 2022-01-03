@@ -896,7 +896,7 @@ mod tests {
                 let string_array = batch
                     .column(0)
                     .as_any()
-                    .downcast_ref::<StringArray>()
+                    .downcast_ref::<Utf8Array<i32>>()
                     .expect("Unexpected type for repartitoned batch");
 
                 string_array
@@ -965,7 +965,7 @@ mod tests {
     async fn hash_repartition_avoid_empty_batch() -> Result<()> {
         let batch = RecordBatch::try_from_iter(vec![(
             "a",
-            Arc::new(StringArray::from(vec!["foo"])) as ArrayRef,
+            Arc::new(Utf8Array::<i32>::from(vec![Some("foo")])) as ArrayRef,
         )])
         .unwrap();
         let partitioning = Partitioning::Hash(
@@ -974,8 +974,8 @@ mod tests {
             ))],
             2,
         );
-        let schema = batch.schema();
-        let input = MockExec::new(vec![Ok(batch)], schema);
+        let schema = batch.schema().clone();
+        let input = MockExec::new(vec![Ok(batch)], schema.clone());
         let exec = RepartitionExec::try_new(Arc::new(input), partitioning).unwrap();
         let output_stream0 = exec.execute(0).await.unwrap();
         let batch0 = crate::physical_plan::common::collect(output_stream0)

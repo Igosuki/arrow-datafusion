@@ -16,12 +16,14 @@
 // under the License.
 
 //! Crypto expressions
+use crate::physical_plan::ColumnarValue;
 use crate::{
     error::{DataFusionError, Result},
     scalar::ScalarValue,
 };
+use arrow::array::ArrayRef;
 use arrow::{
-    array::{Array, BinaryArray, Offset, Offset, Utf8Array},
+    array::{Array, BinaryArray, Offset, Utf8Array},
     datatypes::DataType,
 };
 use blake2::{Blake2b, Blake2s, Digest};
@@ -78,7 +80,7 @@ fn digest_process(
 
 macro_rules! digest_to_array {
     ($METHOD:ident, $INPUT:expr) => {{
-        let binary_array: BinaryArray = $INPUT
+        let binary_array: BinaryArray<i32> = $INPUT
             .iter()
             .map(|x| {
                 x.map(|x| {
@@ -126,12 +128,16 @@ impl DigestAlgorithm {
     where
         T: Offset,
     {
-        let input_value = value.as_any().downcast_ref::<Utf7<T>>().ok_or_else(|| {
-            DataFusionError::Internal(format!(
-                "could not cast value to {}",
-                type_name::<Utf7<T>>()
-            ))
-        })?;
+        let input_value =
+            value
+                .as_any()
+                .downcast_ref::<Utf8Array<T>>()
+                .ok_or_else(|| {
+                    DataFusionError::Internal(format!(
+                        "could not cast value to {}",
+                        type_name::<Utf8Array<T>>()
+                    ))
+                })?;
         let array: ArrayRef = match self {
             Self::Md5 => digest_to_array!(Md5, input_value),
             Self::Sha224 => digest_to_array!(Sha224, input_value),
@@ -141,7 +147,7 @@ impl DigestAlgorithm {
             Self::Blake2b => digest_to_array!(Blake2b, input_value),
             Self::Blake2s => digest_to_array!(Blake2s, input_value),
             Self::Blake3 => {
-                let binary_array: BinaryArray = input_value
+                let binary_array: BinaryArray<i32> = input_value
                     .iter()
                     .map(|opt| {
                         opt.map(|x| {
@@ -245,13 +251,13 @@ pub fn md5(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             let binary_array = array
                 .as_ref()
                 .as_any()
-                .downcast_ref::<BinaryArray>()
+                .downcast_ref::<BinaryArray<i32>>()
                 .ok_or_else(|| {
                     DataFusionError::Internal(
                         "Impossibly got non-binary array data from digest".into(),
                     )
                 })?;
-            let string_array: StringArray = binary_array
+            let string_array: Utf8Array<i32> = binary_array
                 .iter()
                 .map(|opt| opt.map(hex_encode::<_>))
                 .collect();

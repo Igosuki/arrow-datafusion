@@ -22,12 +22,50 @@ use crate::error::{DataFusionError, Result};
 use crate::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-use arrow::{datatypes::SchemaRef, json};
+use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::SchemaRef, io::json::read};
 use std::any::Any;
+use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
 use super::file_stream::{BatchIter, FileStream};
 use super::PhysicalPlanConfig;
+
+struct JsonReader<R> {
+    reader: R,
+    schema: SchemaRef,
+    rows: Vec<String>,
+    projections: Option<Vec<String>>,
+}
+
+impl<R: BufRead> JsonReader<R> {
+    fn new(
+        reader: R,
+        schema: SchemaRef,
+        batch_size: usize,
+        projections: Option<Vec<String>>,
+    ) -> Self {
+        let rows = Vec::with_capacity(batch_size);
+        Self {
+            reader,
+            schema,
+            rows,
+            projections,
+        }
+    }
+}
+
+impl<R: BufRead> Iterator for JsonReader<R> {
+    type Item = arrow::error::Result<RecordBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let read = read::read_rows(&mut self.reader, &mut self.rows).ok()?;
+        Some(read::deserialize(
+            &self.rows[..read],
+            self.schema.fields.clone(),
+        ))
+    }
+}
 
 /// Execution plan for scanning NdJson data source
 #[derive(Debug, Clone)]
@@ -90,12 +128,15 @@ impl ExecutionPlan for NdJsonExec {
 
         // The json reader cannot limit the number of records, so `remaining` is ignored.
         let fun = move |file, _remaining: &Option<usize>| {
-            Box::new(json::Reader::new(
-                file,
-                Arc::clone(&file_schema),
-                batch_size,
-                proj.clone(),
-            )) as BatchIter
+            Box::new(
+                JsonReader::new(
+                    BufReader::new(file),
+                    Arc::clone(&file_schema),
+                    batch_size,
+                    proj.clone(),
+                )
+                .into_iter(),
+            ) as BatchIter
         };
 
         Ok(Box::pin(FileStream::new(

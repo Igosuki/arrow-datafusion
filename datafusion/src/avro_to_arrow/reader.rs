@@ -20,6 +20,7 @@ use crate::arrow::datatypes::SchemaRef;
 use crate::arrow::record_batch::RecordBatch;
 use crate::error::Result;
 use arrow::error::Result as ArrowResult;
+use arrow::io::avro::{read, Compression};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
@@ -101,30 +102,36 @@ impl ReaderBuilder {
     }
 
     /// Create a new `Reader` from the `ReaderBuilder`
-    pub fn build<'a, R>(self, source: R) -> Result<Reader<'a, R>>
+    pub fn build<'a, R>(self, source: R) -> Result<Reader<R>>
     where
         R: Read + Seek,
     {
         let mut source = source;
 
         // check if schema should be inferred
-        let schema = match self.schema {
-            Some(schema) => schema,
-            None => Arc::new(super::read_avro_schema_from_reader(&mut source)?),
-        };
         source.seek(SeekFrom::Start(0))?;
-        Reader::try_new(source, schema, self.batch_size, self.projection)
+        let (avro_schemas, schema, codec, file_marker) =
+            read::read_metadata(&mut source)?;
+        Reader::try_new(
+            source,
+            Arc::new(schema),
+            self.batch_size,
+            self.projection,
+            avro_schemas,
+            codec,
+            file_marker,
+        )
     }
 }
 
 /// Avro file record  reader
-pub struct Reader<'a, R: Read> {
-    array_reader: AvroArrowArrayReader<'a, R>,
+pub struct Reader<R: Read> {
+    array_reader: AvroArrowArrayReader<R>,
     schema: SchemaRef,
     batch_size: usize,
 }
 
-impl<'a, R: Read> Reader<'a, R> {
+impl<'a, R: Read> Reader<R> {
     /// Create a new Avro Reader from any value that implements the `Read` trait.
     ///
     /// If reading a `File`, you can customise the Reader, such as to enable schema
@@ -134,12 +141,18 @@ impl<'a, R: Read> Reader<'a, R> {
         schema: SchemaRef,
         batch_size: usize,
         projection: Option<Vec<String>>,
+        avro_schemas: Vec<avro_schema::Schema>,
+        codec: Option<Compression>,
+        file_marker: [u8; 16],
     ) -> Result<Self> {
         Ok(Self {
             array_reader: AvroArrowArrayReader::try_new(
                 reader,
                 schema.clone(),
                 projection,
+                avro_schemas,
+                codec,
+                file_marker,
             )?,
             schema,
             batch_size,
@@ -160,7 +173,7 @@ impl<'a, R: Read> Reader<'a, R> {
     }
 }
 
-impl<'a, R: Read> Iterator for Reader<'a, R> {
+impl<'a, R: Read> Iterator for Reader<R> {
     type Item = ArrowResult<RecordBatch>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -200,7 +213,7 @@ mod tests {
 
         let schema = reader.schema();
         let batch_schema = batch.schema();
-        assert_eq!(schema, batch_schema);
+        assert_eq!(schema, batch_schema.clone());
 
         let id = schema.column_with_name("id").unwrap();
         assert_eq!(0, id.0);
@@ -259,13 +272,13 @@ mod tests {
         let date_string_col = schema.column_with_name("date_string_col").unwrap();
         assert_eq!(8, date_string_col.0);
         assert_eq!(&DataType::Binary, date_string_col.1.data_type());
-        let col = get_col::<BinaryArray>(&batch, date_string_col).unwrap();
+        let col = get_col::<BinaryArray<i32>>(&batch, date_string_col).unwrap();
         assert_eq!("01/01/09".as_bytes(), col.value(0));
         assert_eq!("01/01/09".as_bytes(), col.value(1));
         let string_col = schema.column_with_name("string_col").unwrap();
         assert_eq!(9, string_col.0);
         assert_eq!(&DataType::Binary, string_col.1.data_type());
-        let col = get_col::<BinaryArray>(&batch, string_col).unwrap();
+        let col = get_col::<BinaryArray<i32>>(&batch, string_col).unwrap();
         assert_eq!("0".as_bytes(), col.value(0));
         assert_eq!("1".as_bytes(), col.value(1));
         let timestamp_col = schema.column_with_name("timestamp_col").unwrap();
@@ -274,7 +287,7 @@ mod tests {
             &DataType::Timestamp(TimeUnit::Microsecond, None),
             timestamp_col.1.data_type()
         );
-        let col = get_col::<TimestampMicrosecondArray>(&batch, timestamp_col).unwrap();
+        let col = get_col::<UInt64Array>(&batch, timestamp_col).unwrap();
         assert_eq!(1230768000000000, col.value(0));
         assert_eq!(1230768060000000, col.value(1));
     }

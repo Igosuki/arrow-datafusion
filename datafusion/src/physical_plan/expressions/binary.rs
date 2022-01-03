@@ -32,6 +32,7 @@ use super::coercion::{
     eq_coercion, like_coercion, numerical_coercion, order_coercion, string_coercion,
 };
 use arrow::scalar::Scalar;
+use arrow::types::NativeType;
 
 // Simple (low performance) kernels until optimized kernels are added to arrow
 // See https://github.com/apache/arrow-rs/issues/960
@@ -569,7 +570,7 @@ fn is_distinct_from<T>(
     right: &PrimitiveArray<T>,
 ) -> Result<BooleanArray>
 where
-    T: ArrowNumericType,
+    T: NativeType,
 {
     Ok(left
         .iter()
@@ -578,9 +579,9 @@ where
         .collect())
 }
 
-fn is_distinct_from_utf8<OffsetSize: StringOffsetSizeTrait>(
-    left: &GenericStringArray<OffsetSize>,
-    right: &GenericStringArray<OffsetSize>,
+fn is_distinct_from_utf8<OffsetSize: Offset>(
+    left: &Utf8Array<OffsetSize>,
+    right: &Utf8Array<OffsetSize>,
 ) -> Result<BooleanArray> {
     Ok(left
         .iter()
@@ -594,7 +595,7 @@ fn is_not_distinct_from<T>(
     right: &PrimitiveArray<T>,
 ) -> Result<BooleanArray>
 where
-    T: ArrowNumericType,
+    T: NativeType,
 {
     Ok(left
         .iter()
@@ -603,9 +604,9 @@ where
         .collect())
 }
 
-fn is_not_distinct_from_utf8<OffsetSize: StringOffsetSizeTrait>(
-    left: &GenericStringArray<OffsetSize>,
-    right: &GenericStringArray<OffsetSize>,
+fn is_not_distinct_from_utf8<OffsetSize: Offset>(
+    left: &Utf8Array<OffsetSize>,
+    right: &Utf8Array<OffsetSize>,
 ) -> Result<BooleanArray> {
     Ok(left
         .iter()
@@ -1073,7 +1074,7 @@ mod tests {
         let arithmetic_op = binary_simple(scalar, op, col("a", schema)?);
         let batch = RecordBatch::try_new(Arc::clone(schema), vec![Arc::clone(arr)])?;
         let result = arithmetic_op.evaluate(&batch)?.into_array(batch.num_rows());
-        assert_eq!(result.as_ref(), expected);
+        assert_eq!(result, Arc::new(expected.clone()) as ArrayRef);
 
         Ok(())
     }
@@ -1091,7 +1092,7 @@ mod tests {
         let arithmetic_op = binary_simple(col("a", schema)?, op, scalar);
         let batch = RecordBatch::try_new(Arc::clone(schema), vec![Arc::clone(arr)])?;
         let result = arithmetic_op.evaluate(&batch)?.into_array(batch.num_rows());
-        assert_eq!(result.as_ref(), expected);
+        assert_eq!(result, Arc::new(expected.clone()) as ArrayRef);
 
         Ok(())
     }
@@ -1518,6 +1519,6 @@ mod tests {
             .into_iter()
             .map(|i| i.map(|i| i * tree_depth))
             .collect();
-        assert_eq!(result.as_ref(), &expected);
+        assert_eq!(result, Arc::new(expected) as ArrayRef);
     }
 }

@@ -17,7 +17,9 @@
 
 //! Utility functions for complex field access
 
+use arrow::array::{ArrayRef, StructArray};
 use arrow::datatypes::{DataType, Field};
+use std::borrow::Borrow;
 
 use crate::error::{DataFusionError, Result};
 use crate::scalar::ScalarValue;
@@ -65,5 +67,34 @@ pub fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Fiel
             "The expression to get an indexed field is only valid for `List` types"
                 .to_string(),
         )),
+    }
+}
+
+pub fn struct_array_from(pairs: Vec<(Field, ArrayRef)>) -> StructArray {
+    let fields: Vec<Field> = pairs.iter().map(|v| v.0.clone()).collect();
+    let values = pairs.iter().map(|v| v.1.clone()).collect();
+    StructArray::from_data(DataType::Struct(fields.clone()), values, None)
+}
+
+pub trait StructArrayExt {
+    fn column_names(&self) -> Vec<&str>;
+    fn column_by_name(&self, column_name: &str) -> Option<&ArrayRef>;
+    fn column(&self, pos: usize) -> ArrayRef;
+}
+
+impl StructArrayExt for StructArray {
+    fn column_names(&self) -> Vec<&str> {
+        self.fields().iter().map(|f| f.name.as_str()).collect()
+    }
+
+    fn column_by_name(&self, column_name: &str) -> Option<&ArrayRef> {
+        self.fields()
+            .iter()
+            .position(|c| c.name() == column_name)
+            .map(|pos| self.values()[pos].borrow())
+    }
+
+    fn column(&self, pos: usize) -> ArrayRef {
+        self.values()[pos].clone()
     }
 }

@@ -21,7 +21,8 @@ use crate::context::Context;
 use crate::functions::{display_all_functions, Function};
 use crate::print_format::PrintFormat;
 use crate::print_options::{self, PrintOptions};
-use datafusion::arrow::array::{ArrayRef, StringArray};
+use arrow::array::Utf8Array;
+use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
@@ -146,7 +147,7 @@ fn all_commands_info() -> RecordBatch {
         schema,
         [names, description]
             .into_iter()
-            .map(|i| Arc::new(StringArray::from(i)) as ArrayRef)
+            .map(|i| Arc::new(Utf8Array::<i32>::from_slice(i)) as ArrayRef)
             .collect::<Vec<_>>(),
     )
     .expect("This should not fail")

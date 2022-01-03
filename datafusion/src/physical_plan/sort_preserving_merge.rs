@@ -667,12 +667,10 @@ mod tests {
     use crate::test::exec::{assert_strong_count_converges_to_zero, BlockingExec};
     use std::iter::FromIterator;
 
+    use crate::arrow::array::Int32Array;
     use crate::arrow::array::*;
-    use crate::arrow::array::{Int32Array, StringArray, TimestampNanosecondArray};
     use crate::arrow::datatypes::*;
     use crate::arrow::io::print;
-    use crate::assert_batches_eq;
-    use crate::datasource::CsvReadOptions;
     use crate::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use crate::physical_plan::expressions::col;
     use crate::physical_plan::file_format::{CsvExec, PhysicalPlanConfig};

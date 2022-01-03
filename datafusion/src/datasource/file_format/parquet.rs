@@ -25,19 +25,11 @@ use arrow::datatypes::Schema;
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use futures::stream::StreamExt;
-use parquet::arrow::ArrowReader;
-use parquet::arrow::ParquetFileArrowReader;
-use parquet::errors::ParquetError;
-use parquet::errors::Result as ParquetResult;
-use parquet::file::reader::ChunkReader;
-use parquet::file::reader::Length;
-use parquet::file::serialized_reader::SerializedFileReader;
-use parquet::file::statistics::Statistics as ParquetStatistics;
 
 use super::FileFormat;
 use super::PhysicalPlanConfig;
 use crate::arrow::datatypes::{DataType, Field};
-use crate::datasource::object_store::{ObjectReader, ObjectReaderStream};
+use crate::datasource::object_store::{ObjectReader, ObjectReaderStream, SeekRead};
 use crate::datasource::{create_max_min_accs, get_col_stats};
 use crate::error::DataFusionError;
 use crate::error::Result;
@@ -48,6 +40,11 @@ use crate::physical_plan::file_format::ParquetExec;
 use crate::physical_plan::ExecutionPlan;
 use crate::physical_plan::{Accumulator, Statistics};
 use crate::scalar::ScalarValue;
+use arrow::io::parquet::read;
+use parquet::schema::types::PhysicalType;
+use parquet::statistics::{
+    BooleanStatistics, PrimitiveStatistics, Statistics as ParquetStatistics,
+};
 
 /// The default file exetension of parquet files
 pub const DEFAULT_PARQUET_EXTENSION: &str = ".parquet";
@@ -125,14 +122,15 @@ fn summarize_min_max(
     min_values: &mut Vec<Option<MinAccumulator>>,
     fields: &[Field],
     i: usize,
-    stat: &ParquetStatistics,
+    stat: &dyn ParquetStatistics,
 ) {
-    match stat {
-        ParquetStatistics::Boolean(s) => {
+    match stat.physical_type() {
+        PhysicalType::Boolean => {
+            let s = stat.as_any().downcast_ref::<BooleanStatistics>().unwrap();
             if let DataType::Boolean = fields[i].data_type() {
-                if s.has_min_max_set() {
+                if s.max_value.is_some() && s.min_value.is_some() {
                     if let Some(max_value) = &mut max_values[i] {
-                        match max_value.update(&[ScalarValue::Boolean(Some(*s.max()))]) {
+                        match max_value.update(&[ScalarValue::Boolean(s.max_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 max_values[i] = None;
@@ -140,7 +138,7 @@ fn summarize_min_max(
                         }
                     }
                     if let Some(min_value) = &mut min_values[i] {
-                        match min_value.update(&[ScalarValue::Boolean(Some(*s.min()))]) {
+                        match min_value.update(&[ScalarValue::Boolean(s.min_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 min_values[i] = None;
@@ -150,11 +148,15 @@ fn summarize_min_max(
                 }
             }
         }
-        ParquetStatistics::Int32(s) => {
+        PhysicalType::Int32 => {
+            let s = stat
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<i32>>()
+                .unwrap();
             if let DataType::Int32 = fields[i].data_type() {
-                if s.has_min_max_set() {
+                if s.max_value.is_some() && s.min_value.is_some() {
                     if let Some(max_value) = &mut max_values[i] {
-                        match max_value.update(&[ScalarValue::Int32(Some(*s.max()))]) {
+                        match max_value.update(&[ScalarValue::Int32(s.max_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 max_values[i] = None;
@@ -162,7 +164,7 @@ fn summarize_min_max(
                         }
                     }
                     if let Some(min_value) = &mut min_values[i] {
-                        match min_value.update(&[ScalarValue::Int32(Some(*s.min()))]) {
+                        match min_value.update(&[ScalarValue::Int32(s.min_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 min_values[i] = None;
@@ -172,11 +174,15 @@ fn summarize_min_max(
                 }
             }
         }
-        ParquetStatistics::Int64(s) => {
+        PhysicalType::Int64 => {
+            let s = stat
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<i64>>()
+                .unwrap();
             if let DataType::Int64 = fields[i].data_type() {
-                if s.has_min_max_set() {
+                if s.max_value.is_some() && s.min_value.is_some() {
                     if let Some(max_value) = &mut max_values[i] {
-                        match max_value.update(&[ScalarValue::Int64(Some(*s.max()))]) {
+                        match max_value.update(&[ScalarValue::Int64(s.max_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 max_values[i] = None;
@@ -184,7 +190,7 @@ fn summarize_min_max(
                         }
                     }
                     if let Some(min_value) = &mut min_values[i] {
-                        match min_value.update(&[ScalarValue::Int64(Some(*s.min()))]) {
+                        match min_value.update(&[ScalarValue::Int64(s.min_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 min_values[i] = None;
@@ -194,11 +200,15 @@ fn summarize_min_max(
                 }
             }
         }
-        ParquetStatistics::Float(s) => {
+        PhysicalType::Float => {
+            let s = stat
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<f32>>()
+                .unwrap();
             if let DataType::Float32 = fields[i].data_type() {
-                if s.has_min_max_set() {
+                if s.max_value.is_some() && s.min_value.is_some() {
                     if let Some(max_value) = &mut max_values[i] {
-                        match max_value.update(&[ScalarValue::Float32(Some(*s.max()))]) {
+                        match max_value.update(&[ScalarValue::Float32(s.max_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 max_values[i] = None;
@@ -206,7 +216,7 @@ fn summarize_min_max(
                         }
                     }
                     if let Some(min_value) = &mut min_values[i] {
-                        match min_value.update(&[ScalarValue::Float32(Some(*s.min()))]) {
+                        match min_value.update(&[ScalarValue::Float32(s.min_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 min_values[i] = None;
@@ -216,11 +226,15 @@ fn summarize_min_max(
                 }
             }
         }
-        ParquetStatistics::Double(s) => {
+        PhysicalType::Double => {
+            let s = stat
+                .as_any()
+                .downcast_ref::<PrimitiveStatistics<f64>>()
+                .unwrap();
             if let DataType::Float64 = fields[i].data_type() {
-                if s.has_min_max_set() {
+                if s.max_value.is_some() && s.min_value.is_some() {
                     if let Some(max_value) = &mut max_values[i] {
-                        match max_value.update(&[ScalarValue::Float64(Some(*s.max()))]) {
+                        match max_value.update(&[ScalarValue::Float64(s.max_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 max_values[i] = None;
@@ -228,7 +242,7 @@ fn summarize_min_max(
                         }
                     }
                     if let Some(min_value) = &mut min_values[i] {
-                        match min_value.update(&[ScalarValue::Float64(Some(*s.min()))]) {
+                        match min_value.update(&[ScalarValue::Float64(s.min_value)]) {
                             Ok(_) => {}
                             Err(_) => {
                                 min_values[i] = None;
@@ -245,9 +259,9 @@ fn summarize_min_max(
 /// Read and parse the schema of the Parquet file at location `path`
 fn fetch_schema(object_reader: Arc<dyn ObjectReader>) -> Result<Schema> {
     let obj_reader = ChunkObjectReader(object_reader);
-    let file_reader = Arc::new(SerializedFileReader::new(obj_reader)?);
-    let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
-    let schema = arrow_reader.get_schema()?;
+    let mut reader = obj_reader.get_read_seek(0, obj_reader.0.length() as usize)?;
+    let metadata = read::read_metadata(&mut reader)?;
+    let schema = read::get_schema(&metadata)?;
 
     Ok(schema)
 }
@@ -255,37 +269,42 @@ fn fetch_schema(object_reader: Arc<dyn ObjectReader>) -> Result<Schema> {
 /// Read and parse the statistics of the Parquet file at location `path`
 fn fetch_statistics(object_reader: Arc<dyn ObjectReader>) -> Result<Statistics> {
     let obj_reader = ChunkObjectReader(object_reader);
-    let file_reader = Arc::new(SerializedFileReader::new(obj_reader)?);
-    let mut arrow_reader = ParquetFileArrowReader::new(file_reader);
-    let schema = arrow_reader.get_schema()?;
+    let mut reader = &mut obj_reader.get_read_seek(0, obj_reader.0.length() as usize)?;
+    let metadata = read::read_metadata(&mut reader)?;
+    let schema = read::get_schema(&metadata)?;
     let num_fields = schema.fields().len();
     let fields = schema.fields().to_vec();
-    let meta_data = arrow_reader.get_metadata();
 
     let mut num_rows = 0;
     let mut total_byte_size = 0;
     let mut null_counts = vec![0; num_fields];
     let mut has_statistics = false;
-
     let (mut max_values, mut min_values) = create_max_min_accs(&schema);
 
-    for row_group_meta in meta_data.row_groups() {
+    for row_group_meta in metadata.row_groups {
         num_rows += row_group_meta.num_rows();
         total_byte_size += row_group_meta.total_byte_size();
 
-        let columns_null_counts = row_group_meta
-            .columns()
-            .iter()
-            .flat_map(|c| c.statistics().map(|stats| stats.null_count()));
+        let columns_null_counts = row_group_meta.columns().iter().flat_map(|c| {
+            c.statistics()
+                .and_then(|stats| stats.ok().map(|s| s.null_count()))
+                .flatten()
+        });
 
         for (i, cnt) in columns_null_counts.enumerate() {
             null_counts[i] += cnt as usize
         }
 
         for (i, column) in row_group_meta.columns().iter().enumerate() {
-            if let Some(stat) = column.statistics() {
+            if let Some(Ok(stat)) = column.statistics() {
                 has_statistics = true;
-                summarize_min_max(&mut max_values, &mut min_values, &fields, i, stat)
+                summarize_min_max(
+                    &mut max_values,
+                    &mut min_values,
+                    &fields,
+                    i,
+                    stat.as_ref(),
+                )
             }
         }
     }
@@ -314,19 +333,31 @@ fn fetch_statistics(object_reader: Arc<dyn ObjectReader>) -> Result<Statistics> 
 /// A wrapper around the object reader to make it implement `ChunkReader`
 pub struct ChunkObjectReader(pub Arc<dyn ObjectReader>);
 
-impl Length for ChunkObjectReader {
-    fn len(&self) -> u64 {
-        self.0.length()
+impl ChunkObjectReader {
+    #[allow(dead_code)]
+    pub(crate) fn get_read(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<Box<dyn Read + Send + Sync>> {
+        self.get_read_sync(start, length)
     }
-}
 
-impl ChunkReader for ChunkObjectReader {
-    type T = Box<dyn Read + Send + Sync>;
+    #[allow(dead_code)]
+    pub(crate) fn get_read_sync(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<Box<dyn Read + Send + Sync>> {
+        self.0.sync_chunk_reader(start, length)
+    }
 
-    fn get_read(&self, start: u64, length: usize) -> ParquetResult<Self::T> {
-        self.0
-            .sync_chunk_reader(start, length)
-            .map_err(|e| ParquetError::ArrowError(e.to_string()))
+    pub(crate) fn get_read_seek(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<Box<dyn SeekRead>> {
+        self.0.sync_seek_chunk_reader(start, length)
     }
 }
 
@@ -342,8 +373,7 @@ mod tests {
 
     use super::*;
     use arrow::array::{
-        BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array,
-        TimestampNanosecondArray,
+        BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, UInt64Array,
     };
     use futures::StreamExt;
 
@@ -490,9 +520,9 @@ mod tests {
         let array = batches[0]
             .column(0)
             .as_any()
-            .downcast_ref::<TimestampNanosecondArray>()
+            .downcast_ref::<UInt64Array>()
             .unwrap();
-        let mut values: Vec<i64> = vec![];
+        let mut values: Vec<u64> = vec![];
         for i in 0..batches[0].num_rows() {
             values.push(array.value(i));
         }
@@ -571,7 +601,7 @@ mod tests {
         let array = batches[0]
             .column(0)
             .as_any()
-            .downcast_ref::<BinaryArray>()
+            .downcast_ref::<BinaryArray<i32>>()
             .unwrap();
         let mut values: Vec<&str> = vec![];
         for i in 0..batches[0].num_rows() {

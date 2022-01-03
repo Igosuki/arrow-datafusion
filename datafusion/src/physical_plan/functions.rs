@@ -33,6 +33,7 @@ use super::{
     type_coercion::{coerce, data_types},
     ColumnarValue, PhysicalExpr,
 };
+use crate::execution::context::ExecutionContextState;
 use crate::physical_plan::array_expressions;
 use crate::physical_plan::datetime_expressions;
 use crate::physical_plan::expressions::{
@@ -43,10 +44,6 @@ use crate::physical_plan::string_expressions;
 use crate::{
     error::{DataFusionError, Result},
     scalar::ScalarValue,
-};
-use crate::{
-    execution::context::ExecutionContextState,
-    physical_plan::array_expressions::SUPPORTED_ARRAY_TYPES,
 };
 use arrow::{
     array::*,
@@ -524,7 +521,7 @@ pub fn return_type(
     match fun {
         BuiltinScalarFunction::Array => Ok(DataType::FixedSizeList(
             Box::new(Field::new("item", input_expr_types[0].clone(), true)),
-            input_expr_types.len() as i32,
+            input_expr_types.len(),
         )),
         BuiltinScalarFunction::Ascii => Ok(DataType::Int32),
         BuiltinScalarFunction::BitLength => {

@@ -66,21 +66,23 @@ impl ProjectionExec {
         let fields: Result<Vec<Field>> = expr
             .iter()
             .map(|(e, name)| {
-                let mut field = Field::new(
+                let field = Field::new(
                     name,
                     e.data_type(&input_schema)?,
                     e.nullable(&input_schema)?,
                 );
-                field.set_metadata(get_field_metadata(e, &input_schema));
+                let new_field =
+                    if let Some(metadata) = get_field_metadata(e, &input_schema) {
+                        field.with_metadata(metadata)
+                    } else {
+                        field
+                    };
 
-                Ok(field)
+                Ok(new_field)
             })
             .collect();
 
-        let schema = Arc::new(Schema::new_with_metadata(
-            fields?,
-            input_schema.metadata().clone(),
-        ));
+        let schema = Arc::new(Schema::new_from(fields?, input_schema.metadata().clone()));
 
         Ok(Self {
             expr,
@@ -198,7 +200,7 @@ fn get_field_metadata(
     input_schema
         .field_with_name(name)
         .ok()
-        .and_then(|f| f.metadata().as_ref().cloned())
+        .and_then(|f| Some(f.metadata().clone()))
 }
 
 fn stats_projection(
@@ -322,7 +324,7 @@ mod tests {
         )?;
 
         let col_field = projection.schema.field(0);
-        let col_metadata = col_field.metadata().clone().unwrap().clone();
+        let col_metadata = col_field.metadata().clone();
         let data: &str = &col_metadata["testing"];
         assert_eq!(data, "test");
 

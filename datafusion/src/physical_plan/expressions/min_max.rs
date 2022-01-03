@@ -33,15 +33,14 @@ type StringArray = Utf8Array<i32>;
 type LargeStringArray = Utf8Array<i64>;
 
 use super::format_state_name;
-use crate::arrow::array::Array;
-use arrow::array::DecimalArray;
+//use crate::arrow::array::Array;
 
 // Min/max aggregation can take Dictionary encode input but always produces unpacked
 // (aka non Dictionary) output. We need to adjust the output data type to reflect this.
 // The reason min/max aggregate produces unpacked output because there is only one
 // min/max value per group; there is no needs to keep them Dictionary encode
 fn min_max_aggregate_data_type(input_type: DataType) -> DataType {
-    if let DataType::Dictionary(_, value_type) = input_type {
+    if let DataType::Dictionary(_, value_type, _) = input_type {
         *value_type
     } else {
         input_type
@@ -128,54 +127,54 @@ macro_rules! typed_min_max_batch {
 
     ($VALUES:expr, $ARRAYTYPE:ident, $SCALAR:ident, $OP:ident, $TZ:expr) => {{
         let array = $VALUES.as_any().downcast_ref::<$ARRAYTYPE>().unwrap();
-        let value = compute::$OP(array);
+        let value = arrow::compute::aggregate::$OP(array);
         ScalarValue::$SCALAR(value, $TZ.clone())
     }};
 }
 
-// TODO implement this in arrow-rs with simd
-// https://github.com/apache/arrow-rs/issues/1010
-// Statically-typed version of min/max(array) -> ScalarValue for decimal types.
-macro_rules! typed_min_max_batch_decimal128 {
-    ($VALUES:expr, $PRECISION:ident, $SCALE:ident, $OP:ident) => {{
-        let null_count = $VALUES.null_count();
-        if null_count == $VALUES.len() {
-            ScalarValue::Decimal128(None, *$PRECISION, *$SCALE)
-        } else {
-            let array = $VALUES.as_any().downcast_ref::<DecimalArray>().unwrap();
-            if null_count == 0 {
-                // there is no null value
-                let mut result = array.value(0);
-                for i in 1..array.len() {
-                    result = result.$OP(array.value(i));
-                }
-                ScalarValue::Decimal128(Some(result), *$PRECISION, *$SCALE)
-            } else {
-                let mut result = 0_i128;
-                let mut has_value = false;
-                for i in 0..array.len() {
-                    if !has_value && array.is_valid(i) {
-                        has_value = true;
-                        result = array.value(i);
-                    }
-                    if array.is_valid(i) {
-                        result = result.$OP(array.value(i));
-                    }
-                }
-                ScalarValue::Decimal128(Some(result), *$PRECISION, *$SCALE)
-            }
-        }
-    }};
-}
+// // TODO implement this in arrow-rs with simd
+// // https://github.com/apache/arrow-rs/issues/1010
+// // Statically-typed version of min/max(array) -> ScalarValue for decimal types.
+// macro_rules! typed_min_max_batch_decimal128 {
+//     ($VALUES:expr, $PRECISION:ident, $SCALE:ident, $OP:ident) => {{
+//         let null_count = $VALUES.null_count();
+//         if null_count == $VALUES.len() {
+//             ScalarValue::Decimal128(None, *$PRECISION, *$SCALE)
+//         } else {
+//             let array = $VALUES.as_any().downcast_ref::<Int128Array>().unwrap();
+//             if null_count == 0 {
+//                 // there is no null value
+//                 let mut result = array.value(0);
+//                 for i in 1..array.len() {
+//                     result = result.$OP(array.value(i));
+//                 }
+//                 ScalarValue::Decimal128(Some(result), *$PRECISION, *$SCALE)
+//             } else {
+//                 let mut result = 0_i128;
+//                 let mut has_value = false;
+//                 for i in 0..array.len() {
+//                     if !has_value && array.is_valid(i) {
+//                         has_value = true;
+//                         result = array.value(i);
+//                     }
+//                     if array.is_valid(i) {
+//                         result = result.$OP(array.value(i));
+//                     }
+//                 }
+//                 ScalarValue::Decimal128(Some(result), *$PRECISION, *$SCALE)
+//             }
+//         }
+//     }};
+// }
 
 // Statically-typed version of min/max(array) -> ScalarValue  for non-string types.
 // this is a macro to support both operations (min and max).
 macro_rules! min_max_batch {
     ($VALUES:expr, $OP:ident) => {{
         match $VALUES.data_type() {
-            DataType::Decimal(precision, scale) => {
-                typed_min_max_batch_decimal128!($VALUES, precision, scale, $OP)
-            }
+            // DataType::Decimal(precision, scale) => {
+            //     typed_min_max_batch_decimal128!($VALUES, precision, scale, $OP)
+            // }
             // all types that have a natural order
             DataType::Int64 => {
                 typed_min_max_batch!($VALUES, Int64Array, Int64, $OP)
@@ -187,17 +186,17 @@ macro_rules! min_max_batch {
             DataType::UInt32 => typed_min_max_batch!($VALUES, UInt32Array, UInt32, $OP),
             DataType::UInt16 => typed_min_max_batch!($VALUES, UInt16Array, UInt16, $OP),
             DataType::UInt8 => typed_min_max_batch!($VALUES, UInt8Array, UInt8, $OP),
-            DataType::Timestamp(TimeUnit::Second, _) => {
-                typed_min_max_batch!($VALUES, Int64Array, TimestampSecond, $OP)
+            DataType::Timestamp(TimeUnit::Second, tz) => {
+                typed_min_max_batch!($VALUES, Int64Array, TimestampSecond, $OP, tz)
             }
-            DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                typed_min_max_batch!($VALUES, Int64Array, TimestampMillisecond, $OP)
+            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                typed_min_max_batch!($VALUES, Int64Array, TimestampMillisecond, $OP, tz)
             }
-            DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                typed_min_max_batch!($VALUES, Int64Array, TimestampMicrosecond, $OP)
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                typed_min_max_batch!($VALUES, Int64Array, TimestampMicrosecond, $OP, tz)
             }
-            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                typed_min_max_batch!($VALUES, Int64Array, TimestampNanosecond, $OP)
+            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+                typed_min_max_batch!($VALUES, Int64Array, TimestampNanosecond, $OP, tz)
             }
             DataType::Date32 => typed_min_max_batch!($VALUES, Int32Array, Date32, $OP),
             DataType::Date64 => typed_min_max_batch!($VALUES, Int64Array, Date64, $OP),
@@ -560,179 +559,177 @@ mod tests {
     use super::*;
     use crate::physical_plan::expressions::col;
     use crate::physical_plan::expressions::tests::aggregate;
-    use crate::scalar::ScalarValue::Decimal128;
+    //use crate::scalar::ScalarValue::Decimal128;
     use crate::{error::Result, generic_test_op};
-    use arrow::array::DecimalBuilder;
-    use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
 
-    #[test]
-    fn min_decimal() -> Result<()> {
-        // min
-        let left = ScalarValue::Decimal128(Some(123), 10, 2);
-        let right = ScalarValue::Decimal128(Some(124), 10, 2);
-        let result = min(&left, &right)?;
-        assert_eq!(result, left);
-
-        // min batch
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-
-        let result = min_batch(&array)?;
-        assert_eq!(result, ScalarValue::Decimal128(Some(1), 10, 0));
-        // min batch without values
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = min_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
-
-        let mut decimal_builder = DecimalBuilder::new(0, 10, 0);
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = min_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
-
-        // min batch with agg
-        let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
-        decimal_builder.append_null().unwrap();
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Min,
-            ScalarValue::Decimal128(Some(1), 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
-
-    #[test]
-    fn min_decimal_all_nulls() -> Result<()> {
-        // min batch all nulls
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for _i in 1..6 {
-            decimal_builder.append_null()?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Min,
-            ScalarValue::Decimal128(None, 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
-
-    #[test]
-    fn min_decimal_with_nulls() -> Result<()> {
-        // min batch with nulls
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            if i == 2 {
-                decimal_builder.append_null()?;
-            } else {
-                decimal_builder.append_value(i as i128)?;
-            }
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Min,
-            ScalarValue::Decimal128(Some(1), 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
-
-    #[test]
-    fn max_decimal() -> Result<()> {
-        // max
-        let left = ScalarValue::Decimal128(Some(123), 10, 2);
-        let right = ScalarValue::Decimal128(Some(124), 10, 2);
-        let result = max(&left, &right)?;
-        assert_eq!(result, right);
-
-        let right = ScalarValue::Decimal128(Some(124), 10, 3);
-        let result = max(&left, &right);
-        let expect = DataFusionError::Internal(format!(
-            "MIN/MAX is not expected to receive scalars of incompatible types {:?}",
-            (Decimal128(Some(123), 10, 2), Decimal128(Some(124), 10, 3))
-        ));
-        assert_eq!(expect.to_string(), result.unwrap_err().to_string());
-
-        // max batch
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 5);
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = max_batch(&array)?;
-        assert_eq!(result, ScalarValue::Decimal128(Some(5), 10, 5));
-        // max batch without values
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = max_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
-
-        let mut decimal_builder = DecimalBuilder::new(0, 10, 0);
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        let result = max_batch(&array)?;
-        assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
-        // max batch with agg
-        let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
-        decimal_builder.append_null().unwrap();
-        for i in 1..6 {
-            decimal_builder.append_value(i as i128)?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Max,
-            ScalarValue::Decimal128(Some(5), 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
-
-    #[test]
-    fn max_decimal_with_nulls() -> Result<()> {
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for i in 1..6 {
-            if i == 2 {
-                decimal_builder.append_null()?;
-            } else {
-                decimal_builder.append_value(i as i128)?;
-            }
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Max,
-            ScalarValue::Decimal128(Some(5), 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
-
-    #[test]
-    fn max_decimal_all_nulls() -> Result<()> {
-        let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
-        for _i in 1..6 {
-            decimal_builder.append_null()?;
-        }
-        let array: ArrayRef = Arc::new(decimal_builder.finish());
-        generic_test_op!(
-            array,
-            DataType::Decimal(10, 0),
-            Min,
-            ScalarValue::Decimal128(None, 10, 0),
-            DataType::Decimal(10, 0)
-        )
-    }
+    // #[test]
+    // fn min_decimal() -> Result<()> {
+    //     // min
+    //     let left = ScalarValue::Decimal128(Some(123), 10, 2);
+    //     let right = ScalarValue::Decimal128(Some(124), 10, 2);
+    //     let result = min(&left, &right)?;
+    //     assert_eq!(result, left);
+    //
+    //     // min batch
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //
+    //     let result = min_batch(&array)?;
+    //     assert_eq!(result, ScalarValue::Decimal128(Some(1), 10, 0));
+    //     // min batch without values
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = min_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
+    //
+    //     let mut decimal_builder = DecimalBuilder::new(0, 10, 0);
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = min_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
+    //
+    //     // min batch with agg
+    //     let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
+    //     decimal_builder.append_null().unwrap();
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Min,
+    //         ScalarValue::Decimal128(Some(1), 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn min_decimal_all_nulls() -> Result<()> {
+    //     // min batch all nulls
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for _i in 1..6 {
+    //         decimal_builder.append_null()?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Min,
+    //         ScalarValue::Decimal128(None, 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn min_decimal_with_nulls() -> Result<()> {
+    //     // min batch with nulls
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         if i == 2 {
+    //             decimal_builder.append_null()?;
+    //         } else {
+    //             decimal_builder.append_value(i as i128)?;
+    //         }
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Min,
+    //         ScalarValue::Decimal128(Some(1), 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn max_decimal() -> Result<()> {
+    //     // max
+    //     let left = ScalarValue::Decimal128(Some(123), 10, 2);
+    //     let right = ScalarValue::Decimal128(Some(124), 10, 2);
+    //     let result = max(&left, &right)?;
+    //     assert_eq!(result, right);
+    //
+    //     let right = ScalarValue::Decimal128(Some(124), 10, 3);
+    //     let result = max(&left, &right);
+    //     let expect = DataFusionError::Internal(format!(
+    //         "MIN/MAX is not expected to receive scalars of incompatible types {:?}",
+    //         (Decimal128(Some(123), 10, 2), Decimal128(Some(124), 10, 3))
+    //     ));
+    //     assert_eq!(expect.to_string(), result.unwrap_err().to_string());
+    //
+    //     // max batch
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 5);
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = max_batch(&array)?;
+    //     assert_eq!(result, ScalarValue::Decimal128(Some(5), 10, 5));
+    //     // max batch without values
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = max_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
+    //
+    //     let mut decimal_builder = DecimalBuilder::new(0, 10, 0);
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     let result = max_batch(&array)?;
+    //     assert_eq!(ScalarValue::Decimal128(None, 10, 0), result);
+    //     // max batch with agg
+    //     let mut decimal_builder = DecimalBuilder::new(6, 10, 0);
+    //     decimal_builder.append_null().unwrap();
+    //     for i in 1..6 {
+    //         decimal_builder.append_value(i as i128)?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Max,
+    //         ScalarValue::Decimal128(Some(5), 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn max_decimal_with_nulls() -> Result<()> {
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for i in 1..6 {
+    //         if i == 2 {
+    //             decimal_builder.append_null()?;
+    //         } else {
+    //             decimal_builder.append_value(i as i128)?;
+    //         }
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Max,
+    //         ScalarValue::Decimal128(Some(5), 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
+    //
+    // #[test]
+    // fn max_decimal_all_nulls() -> Result<()> {
+    //     let mut decimal_builder = DecimalBuilder::new(5, 10, 0);
+    //     for _i in 1..6 {
+    //         decimal_builder.append_null()?;
+    //     }
+    //     let array: ArrayRef = Arc::new(decimal_builder.finish());
+    //     generic_test_op!(
+    //         array,
+    //         DataType::Decimal(10, 0),
+    //         Min,
+    //         ScalarValue::Decimal128(None, 10, 0),
+    //         DataType::Decimal(10, 0)
+    //     )
+    // }
 
     #[test]
     fn max_i32() -> Result<()> {
