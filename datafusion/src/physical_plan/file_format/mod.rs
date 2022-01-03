@@ -179,7 +179,7 @@ struct PartitionColumnProjector {
     /// An Arrow buffer initialized to zeros that represents the key array of all partition
     /// columns (partition columns are materialized by dictionary arrays with only one
     /// value in the dictionary, thus all the keys are equal to zero).
-    key_buffer_cache: Option<Buffer<i32>>,
+    key_buffer_cache: Option<Buffer<u8>>,
     /// Mapping between the indexes in the list of partition columns and the target
     /// schema. Sorted by index in the target schema so that we can iterate on it to
     /// insert the partition columns in the target record batch.
@@ -246,7 +246,7 @@ impl PartitionColumnProjector {
 }
 
 fn create_dict_array(
-    key_buffer_cache: &mut Option<Buffer<i32>>,
+    key_buffer_cache: &mut Option<Buffer<u8>>,
     val: &ScalarValue,
     len: usize,
 ) -> ArrayRef {
@@ -257,14 +257,14 @@ fn create_dict_array(
     let sliced_key_buffer = match key_buffer_cache {
         Some(buf) if buf.len() >= len => buf.clone().slice(buf.len(), len),
         _ => {
-            let key_buffer_builder = Buffer::<i32>::new_zeroed(len);
+            let key_buffer_builder = Buffer::<u8>::new_zeroed(len);
             key_buffer_cache.insert(key_buffer_builder).clone()
         }
     };
 
     // assemble pieces together
     let keys_data =
-        PrimitiveArray::<i32>::from_data(DataType::UInt8, sliced_key_buffer, None);
+        PrimitiveArray::<u8>::from_data(DataType::UInt8, sliced_key_buffer, None);
     let dict = DictionaryArray::from_data(keys_data, dict_vals);
     debug_assert_eq!(dict.data_type(), &*DEFAULT_PARTITION_COLUMN_DATATYPE);
     Arc::new(dict)
