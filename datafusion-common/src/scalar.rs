@@ -1002,6 +1002,9 @@ impl ScalarValue {
             }
         }
 
+        if elements.is_empty() {
+            return Ok(ListArray::<i32>::new_empty(data_type.clone()));
+        }
         // Concatenate element arrays to create single flat array
         let element_arrays: Vec<&dyn Array> =
             elements.iter().map(|a| a.as_ref()).collect();

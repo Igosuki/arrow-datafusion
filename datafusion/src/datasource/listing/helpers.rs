@@ -29,7 +29,7 @@ use futures::{
     stream::{self},
     StreamExt, TryStreamExt,
 };
-use log::debug;
+use log::trace;
 
 use crate::{
     error::Result,
@@ -283,7 +283,7 @@ fn paths_to_batch(
                 partition_builders[i].push(Some(part_val));
             }
         } else {
-            debug!("No partitioning for path {}", file_meta.path());
+            trace!("No partitioning for path {}", file_meta.path());
         }
     }
 
