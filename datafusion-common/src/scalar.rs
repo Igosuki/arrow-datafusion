@@ -1145,7 +1145,17 @@ impl ScalarValue {
                 DataType::LargeUtf8 => {
                     build_list!(MutableLargeStringArray, LargeUtf8, values, size)
                 }
-                dt => panic!("Unexpected DataType for list {:?}", dt),
+                _ => Arc::new(
+                    ScalarValue::iter_to_array_list(
+                        repeat(self.clone()).take(size),
+                        &DataType::List(Box::new(Field::new(
+                            "item",
+                            data_type.as_ref().clone(),
+                            true,
+                        ))),
+                    )
+                    .unwrap(),
+                ),
             },
             ScalarValue::IntervalDayTime(e) => match e {
                 Some(value) => {
