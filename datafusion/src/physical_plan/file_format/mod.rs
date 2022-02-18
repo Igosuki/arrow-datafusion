@@ -43,7 +43,7 @@ use crate::{
     scalar::ScalarValue,
 };
 use arrow::array::new_null_array;
-use arrow::array::UInt8Array;
+use arrow::array::UInt16Array;
 use arrow::datatypes::IntegerType;
 use lazy_static::lazy_static;
 use log::info;
@@ -265,7 +265,7 @@ struct PartitionColumnProjector {
     /// An Arrow buffer initialized to zeros that represents the key array of all partition
     /// columns (partition columns are materialized by dictionary arrays with only one
     /// value in the dictionary, thus all the keys are equal to zero).
-    key_array_cache: Option<UInt8Array>,
+    key_array_cache: Option<UInt16Array>,
     /// Mapping between the indexes in the list of partition columns and the target
     /// schema. Sorted by index in the target schema so that we can iterate on it to
     /// insert the partition columns in the target record batch.
@@ -332,7 +332,7 @@ impl PartitionColumnProjector {
 }
 
 fn create_dict_array(
-    key_array_cache: &mut Option<UInt8Array>,
+    key_array_cache: &mut Option<UInt16Array>,
     val: &ScalarValue,
     len: usize,
 ) -> ArrayRef {
@@ -343,12 +343,12 @@ fn create_dict_array(
     let sliced_keys = match key_array_cache {
         Some(buf) if buf.len() >= len => buf.slice(0, len),
         _ => key_array_cache
-            .insert(UInt8Array::from_trusted_len_values_iter(
+            .insert(UInt16Array::from_trusted_len_values_iter(
                 iter::repeat(0).take(len),
             ))
             .clone(),
     };
-    Arc::new(DictionaryArray::<u8>::from_data(sliced_keys, dict_vals))
+    Arc::new(DictionaryArray::<u16>::from_data(sliced_keys, dict_vals))
 }
 
 #[cfg(test)]
