@@ -35,5 +35,5 @@ lto = true
 codegen-units = 1
 
 [patch.crates-io]
-arrow2 = { git = "https://github.com/jorgecarleitao/arrow2.git", branch = "main" }
+arrow2 = { git = "https://github.com/jorgecarleitao/arrow2.git", rev = "dded624dc6a6347d7e937efee7779a44a51c4edb" }
 parquet2 = { git = "https://github.com/jorgecarleitao/parquet2.git", branch = "main" }
