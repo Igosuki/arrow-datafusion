@@ -343,12 +343,12 @@ fn create_dict_array(
     let sliced_keys = match key_array_cache {
         Some(buf) if buf.len() >= len => buf.slice(0, len),
         _ => key_array_cache
-            .insert(UInt8Array::from_trusted_len_values_iter(
+            .insert(UInt16Array::from_trusted_len_values_iter(
                 iter::repeat(0).take(len),
             ))
             .clone(),
     };
-    Arc::new(DictionaryArray::<u8>::from_data(sliced_keys, dict_vals))
+    Arc::new(DictionaryArray::<u16>::from_data(sliced_keys, dict_vals))
 }
 
 #[cfg(test)]
